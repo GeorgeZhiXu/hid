@@ -163,10 +163,16 @@ class MainActivity : AppCompatActivity(),
     private fun handleMouseEvent(event: DrawPadView.MouseEvent) {
         if (!hidManager.isConnected) return
 
+        if (event.scroll != 0f) {
+            // Scroll event
+            val scroll = event.scroll.toInt().coerceIn(-127, 127)
+            hidManager.sendMouseReport(false, false, false, 0, 0, scroll)
+            return
+        }
+
         val scaledDx = (event.dx * settings.mouseSensitivity).toInt()
         val scaledDy = (event.dy * settings.mouseSensitivity).toInt()
 
-        // Split large deltas into multiple reports
         sendMouseDelta(event.leftButton, event.rightButton, scaledDx, scaledDy)
     }
 
