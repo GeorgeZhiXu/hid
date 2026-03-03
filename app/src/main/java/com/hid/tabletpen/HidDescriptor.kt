@@ -1,24 +1,34 @@
 package com.hid.tabletpen
 
 /**
- * HID Report Descriptor for a digitizer pen tablet.
+ * HID Report Descriptors for digitizer pen and mouse.
  *
  * Report ID 1 — Digitizer (7 bytes):
  *   Byte 0: [0:Tip Switch][1:Barrel Switch][2:In Range][3-7:padding]
  *   Byte 1-2: X (uint16 LE, 0–32767)
  *   Byte 3-4: Y (uint16 LE, 0–32767)
  *   Byte 5-6: Pressure (uint16 LE, 0–4095)
+ *
+ * Report ID 2 — Mouse (4 bytes):
+ *   Byte 0: [0:Left][1:Right][2:Middle][3-7:padding]
+ *   Byte 1: X delta (int8, -127..127)
+ *   Byte 2: Y delta (int8, -127..127)
+ *   Byte 3: Scroll wheel (int8, -127..127)
  */
 object HidDescriptor {
 
     const val REPORT_ID_DIGITIZER: Int = 1
     const val DIGITIZER_REPORT_SIZE: Int = 7
 
+    const val REPORT_ID_MOUSE: Int = 2
+    const val MOUSE_REPORT_SIZE: Int = 4
+
     const val X_MAX: Int = 32767
     const val Y_MAX: Int = 32767
     const val PRESSURE_MAX: Int = 4095
 
     val DESCRIPTOR: ByteArray = bytes(
+        // ===== DIGITIZER PEN (Report ID 1) =====
         // Usage Page (Digitizer)
         0x05, 0x0D,
         // Usage (Pen)
@@ -33,67 +43,85 @@ object HidDescriptor {
         0xA1, 0x00,
 
         // --- Buttons: 3 bits ---
-        // Usage (Tip Switch)
-        0x09, 0x42,
-        // Usage (Barrel Switch)
-        0x09, 0x44,
-        // Usage (In Range)
-        0x09, 0x32,
-        // Logical Minimum (0)
-        0x15, 0x00,
-        // Logical Maximum (1)
-        0x25, 0x01,
-        // Report Size (1)
-        0x75, 0x01,
-        // Report Count (3)
-        0x95, 0x03,
-        // Input (Data, Variable, Absolute)
-        0x81, 0x02,
+        0x09, 0x42,       // Usage (Tip Switch)
+        0x09, 0x44,       // Usage (Barrel Switch)
+        0x09, 0x32,       // Usage (In Range)
+        0x15, 0x00,       // Logical Minimum (0)
+        0x25, 0x01,       // Logical Maximum (1)
+        0x75, 0x01,       // Report Size (1)
+        0x95, 0x03,       // Report Count (3)
+        0x81, 0x02,       // Input (Data, Variable, Absolute)
 
         // --- Padding: 5 bits ---
-        // Report Size (5)
-        0x75, 0x05,
-        // Report Count (1)
-        0x95, 0x01,
-        // Input (Constant)
-        0x81, 0x03,
+        0x75, 0x05,       // Report Size (5)
+        0x95, 0x01,       // Report Count (1)
+        0x81, 0x03,       // Input (Constant)
 
         // --- X: 16 bits absolute ---
-        // Usage Page (Generic Desktop)
-        0x05, 0x01,
-        // Usage (X)
-        0x09, 0x30,
-        // Logical Minimum (0)
-        0x15, 0x00,
-        // Logical Maximum (32767)
-        0x26, 0xFF, 0x7F,
-        // Report Size (16)
-        0x75, 0x10,
-        // Report Count (1)
-        0x95, 0x01,
-        // Input (Data, Variable, Absolute)
-        0x81, 0x02,
+        0x05, 0x01,       // Usage Page (Generic Desktop)
+        0x09, 0x30,       // Usage (X)
+        0x15, 0x00,       // Logical Minimum (0)
+        0x26, 0xFF, 0x7F, // Logical Maximum (32767)
+        0x75, 0x10,       // Report Size (16)
+        0x95, 0x01,       // Report Count (1)
+        0x81, 0x02,       // Input (Data, Variable, Absolute)
 
         // --- Y: 16 bits absolute ---
-        // Usage (Y)
-        0x09, 0x31,
-        // Input (Data, Variable, Absolute)
-        0x81, 0x02,
+        0x09, 0x31,       // Usage (Y)
+        0x81, 0x02,       // Input (Data, Variable, Absolute)
 
         // --- Pressure: 16 bits ---
-        // Usage Page (Digitizer)
-        0x05, 0x0D,
-        // Usage (Tip Pressure)
-        0x09, 0x30,
-        // Logical Maximum (4095)
-        0x26, 0xFF, 0x0F,
-        // Input (Data, Variable, Absolute)
-        0x81, 0x02,
+        0x05, 0x0D,       // Usage Page (Digitizer)
+        0x09, 0x30,       // Usage (Tip Pressure)
+        0x26, 0xFF, 0x0F, // Logical Maximum (4095)
+        0x81, 0x02,       // Input (Data, Variable, Absolute)
 
-        // End Collection (Physical)
-        0xC0,
-        // End Collection (Application)
-        0xC0
+        0xC0,             // End Collection (Physical)
+        0xC0,             // End Collection (Application)
+
+        // ===== MOUSE (Report ID 2) =====
+        0x05, 0x01,       // Usage Page (Generic Desktop)
+        0x09, 0x02,       // Usage (Mouse)
+        0xA1, 0x01,       // Collection (Application)
+        0x85, 0x02,       // Report ID (2)
+        0x09, 0x01,       // Usage (Pointer)
+        0xA1, 0x00,       // Collection (Physical)
+
+        // --- Buttons: 3 bits (left, right, middle) ---
+        0x05, 0x09,       // Usage Page (Button)
+        0x19, 0x01,       // Usage Minimum (Button 1)
+        0x29, 0x03,       // Usage Maximum (Button 3)
+        0x15, 0x00,       // Logical Minimum (0)
+        0x25, 0x01,       // Logical Maximum (1)
+        0x75, 0x01,       // Report Size (1)
+        0x95, 0x03,       // Report Count (3)
+        0x81, 0x02,       // Input (Data, Variable, Absolute)
+
+        // --- Padding: 5 bits ---
+        0x75, 0x05,       // Report Size (5)
+        0x95, 0x01,       // Report Count (1)
+        0x81, 0x03,       // Input (Constant)
+
+        // --- X, Y delta: 8 bits relative each ---
+        0x05, 0x01,       // Usage Page (Generic Desktop)
+        0x09, 0x30,       // Usage (X)
+        0x09, 0x31,       // Usage (Y)
+        0x15, 0x81,       // Logical Minimum (-127)
+        0x25, 0x7F,       // Logical Maximum (127)
+        0x75, 0x08,       // Report Size (8)
+        0x95, 0x02,       // Report Count (2)
+        0x81, 0x06,       // Input (Data, Variable, Relative)
+
+        // --- Scroll wheel: 8 bits relative ---
+        0x09, 0x38,       // Usage (Wheel)
+        0x15, 0x81,       // Logical Minimum (-127)
+        0x25, 0x7F,       // Logical Maximum (127)
+        0x75, 0x08,       // Report Size (8)
+        0x95, 0x01,       // Report Count (1)
+        0x81, 0x06,       // Input (Data, Variable, Relative)
+
+        0xC0,             // End Collection (Physical)
+        0xC0              // End Collection (Application)
     )
 
     fun buildReport(
@@ -121,6 +149,27 @@ object HidDescriptor {
             (cy shr 8).toByte(),
             (cp and 0xFF).toByte(),
             (cp shr 8).toByte()
+        )
+    }
+
+    fun buildMouseReport(
+        left: Boolean,
+        right: Boolean,
+        middle: Boolean,
+        dx: Int,
+        dy: Int,
+        scroll: Int = 0
+    ): ByteArray {
+        var buttons = 0
+        if (left) buttons = buttons or 0x01
+        if (right) buttons = buttons or 0x02
+        if (middle) buttons = buttons or 0x04
+
+        return byteArrayOf(
+            buttons.toByte(),
+            dx.coerceIn(-127, 127).toByte(),
+            dy.coerceIn(-127, 127).toByte(),
+            scroll.coerceIn(-127, 127).toByte()
         )
     }
 

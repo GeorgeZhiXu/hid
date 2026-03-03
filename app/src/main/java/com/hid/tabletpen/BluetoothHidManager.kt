@@ -34,9 +34,16 @@ class BluetoothHidManager(private val context: Context) {
 
     val isConnected: Boolean get() = connectedDevice != null
     val connectedDeviceName: String? get() = connectedDevice?.name
+    val connectedDeviceAddress: String? get() = connectedDevice?.address
 
     private val adapter: BluetoothAdapter? by lazy {
         (context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
+    }
+
+    private var autoConnectAddress: String? = null
+
+    fun setAutoConnectDevice(address: String?) {
+        autoConnectAddress = address
     }
 
     fun start() {
@@ -71,6 +78,20 @@ class BluetoothHidManager(private val context: Context) {
         val hid = hidDevice ?: return false
         val report = HidDescriptor.buildReport(tipDown, barrel, inRange, x, y, pressure)
         return hid.sendReport(device, HidDescriptor.REPORT_ID_DIGITIZER, report)
+    }
+
+    fun sendMouseReport(
+        left: Boolean,
+        right: Boolean,
+        middle: Boolean,
+        dx: Int,
+        dy: Int,
+        scroll: Int = 0
+    ): Boolean {
+        val device = connectedDevice ?: return false
+        val hid = hidDevice ?: return false
+        val report = HidDescriptor.buildMouseReport(left, right, middle, dx, dy, scroll)
+        return hid.sendReport(device, HidDescriptor.REPORT_ID_MOUSE, report)
     }
 
     // ---- Profile listener ----
@@ -114,6 +135,9 @@ class BluetoothHidManager(private val context: Context) {
         override fun onAppStatusChanged(pluggedDevice: BluetoothDevice?, registered: Boolean) {
             Log.d(TAG, "onAppStatusChanged registered=$registered device=$pluggedDevice")
             listener?.onHidReady(registered)
+            if (registered && connectedDevice == null) {
+                tryAutoConnect()
+            }
         }
 
         override fun onConnectionStateChanged(device: BluetoothDevice, state: Int) {
@@ -135,13 +159,16 @@ class BluetoothHidManager(private val context: Context) {
         ) {
             Log.d(TAG, "onGetReport type=$type id=$id")
             // Respond with a zero report
-            if (id.toInt() == HidDescriptor.REPORT_ID_DIGITIZER) {
-                hidDevice?.replyReport(
-                    device, type, id,
-                    ByteArray(HidDescriptor.DIGITIZER_REPORT_SIZE)
-                )
-            } else {
-                hidDevice?.reportError(device, BluetoothHidDevice.ERROR_RSP_INVALID_RPT_ID)
+            when (id.toInt()) {
+                HidDescriptor.REPORT_ID_DIGITIZER -> {
+                    hidDevice?.replyReport(device, type, id, ByteArray(HidDescriptor.DIGITIZER_REPORT_SIZE))
+                }
+                HidDescriptor.REPORT_ID_MOUSE -> {
+                    hidDevice?.replyReport(device, type, id, ByteArray(HidDescriptor.MOUSE_REPORT_SIZE))
+                }
+                else -> {
+                    hidDevice?.reportError(device, BluetoothHidDevice.ERROR_RSP_INVALID_RPT_ID)
+                }
             }
         }
 
@@ -153,6 +180,24 @@ class BluetoothHidManager(private val context: Context) {
 
         override fun onInterruptData(device: BluetoothDevice, reportId: Byte, data: ByteArray) {
             Log.d(TAG, "onInterruptData id=$reportId len=${data.size}")
+        }
+    }
+
+    private fun tryAutoConnect() {
+        val address = autoConnectAddress ?: return
+        val bt = adapter ?: return
+        val hid = hidDevice ?: return
+
+        try {
+            val device = bt.getRemoteDevice(address)
+            if (device.bondState == BluetoothDevice.BOND_BONDED) {
+                Log.i(TAG, "Auto-connecting to ${device.name ?: address}")
+                hid.connect(device)
+            } else {
+                Log.d(TAG, "Device $address not bonded, skipping auto-connect")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Auto-connect failed", e)
         }
     }
 }
