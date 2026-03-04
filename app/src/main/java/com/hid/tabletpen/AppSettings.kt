@@ -26,7 +26,10 @@ data class AppSettings(
     val clearOnScreenshot: Boolean = true,   // auto-clear strokes on new screenshot
     val pressureFloor: Float = 0.8f,       // min pressure when tip is down (0.0–1.0)
     val pressureExponent: Float = 0.5f,    // curve exponent for remaining range
-    val mouseSensitivity: Float = 2.0f
+    val mouseSensitivity: Float = 2.0f,
+    val scrollSensitivity: Float = 2.0f,    // scroll speed multiplier (0.5–5.0)
+    val pinchSensitivity: Float = 30f,      // pinch zoom multiplier (5–60)
+    val pinchThreshold: Float = 0.01f       // min distance-change ratio to trigger pinch (0.005–0.05)
 ) {
     companion object {
         private const val PREFS = "tabletpen_settings"
@@ -39,6 +42,9 @@ data class AppSettings(
         private const val KEY_PRESSURE_FLOOR = "pressure_floor"
         private const val KEY_PRESSURE_EXP = "pressure_exp"
         private const val KEY_MOUSE_SENS = "mouse_sens"
+        private const val KEY_SCROLL_SENS = "scroll_sens"
+        private const val KEY_PINCH_SENS = "pinch_sens"
+        private const val KEY_PINCH_THRESH = "pinch_thresh"
         private const val KEY_LAST_DEVICE = "last_device"
 
         fun loadLastDevice(context: Context): String? {
@@ -62,7 +68,10 @@ data class AppSettings(
                 clearOnScreenshot = p.getBoolean(KEY_CLEAR_ON_SS, true),
                 pressureFloor = p.getFloat(KEY_PRESSURE_FLOOR, 0.8f),
                 pressureExponent = p.getFloat(KEY_PRESSURE_EXP, 0.5f),
-                mouseSensitivity = p.getFloat(KEY_MOUSE_SENS, 2.0f)
+                mouseSensitivity = p.getFloat(KEY_MOUSE_SENS, 2.0f),
+                scrollSensitivity = p.getFloat(KEY_SCROLL_SENS, 2.0f),
+                pinchSensitivity = p.getFloat(KEY_PINCH_SENS, 30f),
+                pinchThreshold = p.getFloat(KEY_PINCH_THRESH, 0.01f)
             )
         }
 
@@ -77,6 +86,9 @@ data class AppSettings(
                 .putFloat(KEY_PRESSURE_FLOOR, s.pressureFloor)
                 .putFloat(KEY_PRESSURE_EXP, s.pressureExponent)
                 .putFloat(KEY_MOUSE_SENS, s.mouseSensitivity)
+                .putFloat(KEY_SCROLL_SENS, s.scrollSensitivity)
+                .putFloat(KEY_PINCH_SENS, s.pinchSensitivity)
+                .putFloat(KEY_PINCH_THRESH, s.pinchThreshold)
                 .apply()
         }
     }

@@ -94,6 +94,13 @@ class BluetoothHidManager(private val context: Context) {
         return hid.sendReport(device, HidDescriptor.REPORT_ID_MOUSE, report)
     }
 
+    fun sendKeyboardReport(modifiers: Int): Boolean {
+        val device = connectedDevice ?: return false
+        val hid = hidDevice ?: return false
+        val report = HidDescriptor.buildKeyboardReport(modifiers)
+        return hid.sendReport(device, HidDescriptor.REPORT_ID_KEYBOARD, report)
+    }
+
     // ---- Profile listener ----
 
     private val profileListener = object : BluetoothProfile.ServiceListener {
@@ -165,6 +172,9 @@ class BluetoothHidManager(private val context: Context) {
                 }
                 HidDescriptor.REPORT_ID_MOUSE -> {
                     hidDevice?.replyReport(device, type, id, ByteArray(HidDescriptor.MOUSE_REPORT_SIZE))
+                }
+                HidDescriptor.REPORT_ID_KEYBOARD -> {
+                    hidDevice?.replyReport(device, type, id, ByteArray(HidDescriptor.KEYBOARD_REPORT_SIZE))
                 }
                 else -> {
                     hidDevice?.reportError(device, BluetoothHidDevice.ERROR_RSP_INVALID_RPT_ID)

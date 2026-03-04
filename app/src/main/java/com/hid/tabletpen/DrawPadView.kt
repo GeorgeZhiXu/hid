@@ -12,7 +12,6 @@ import android.os.Handler
 import android.os.Looper
 import android.util.AttributeSet
 import android.view.MotionEvent
-import android.view.ScaleGestureDetector
 import android.view.View
 
 class DrawPadView @JvmOverloads constructor(
@@ -38,12 +37,13 @@ class DrawPadView @JvmOverloads constructor(
         val rightButton: Boolean,
         val dx: Float,
         val dy: Float,
-        val scroll: Float = 0f
+        val scroll: Float = 0f,
+        val horizontalScroll: Float = 0f
     )
 
     var onPenEvent: ((PenEvent) -> Unit)? = null
-    var onFocusZoomChanged: (() -> Unit)? = null  // called after pinch zoom adjusts focus
     var onMouseEvent: ((MouseEvent) -> Unit)? = null
+    var onPinchZoom: ((Float) -> Unit)? = null  // called with scale factor during pinch
 
     // ---- Settings ----
 
@@ -266,7 +266,6 @@ class DrawPadView @JvmOverloads constructor(
     override fun onTouchEvent(event: MotionEvent): Boolean {
         // Route finger multi-touch to trackpad handler
         if (event.getToolType(0) == MotionEvent.TOOL_TYPE_FINGER) {
-            scaleDetector.onTouchEvent(event)
             processTrackpad(event)
             return true
         }
@@ -471,52 +470,33 @@ class DrawPadView @JvmOverloads constructor(
     }
 
     // ---- Finger trackpad (Magic Trackpad-style) ----
+    // Manual gesture detection: tracks both fingers to distinguish scroll vs pinch
 
     private var trackFingerCount = 0
+    private var trackMaxFingers = 0
+    private var trackDownTime = 0L
+    private var trackMoved = false
+
+    // Single finger state
     private var trackLastX = -1f
     private var trackLastY = -1f
     private var trackDownX = -1f
     private var trackDownY = -1f
-    private var trackDownTime = 0L
-    private var trackMoved = false
-    private var trackTwoFingerLastY = -1f
-    private var trackTwoFingerTapped = false
-    private var trackPinching = false
+
+    // Two finger state: track each finger independently
+    private var trackF0LastX = 0f; private var trackF0LastY = 0f
+    private var trackF1LastX = 0f; private var trackF1LastY = 0f
+    private var trackLastDist = 0f // distance between fingers for pinch detection
 
     private val TAP_TIMEOUT = 250L
-    private val TAP_SLOP = 20f // px movement threshold for tap vs drag
+    private val TAP_SLOP = 20f
+    var pinchThreshold = 0.01f // ratio of distance-change to distance
 
-    private val scaleDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
-        override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
-            trackPinching = true
-            return true
-        }
+    var scrollSensitivity = 2.0f
 
-        override fun onScale(detector: ScaleGestureDetector): Boolean {
-            val fr = focusRect ?: return false
-            val scale = 1f / detector.scaleFactor // pinch in = zoom in = shrink focus rect
-
-            val cx = (fr.left + fr.right) / 2f
-            val cy = (fr.top + fr.bottom) / 2f
-            val newW = (fr.width() * scale).coerceIn(0.05f, 1f)
-            val newH = (fr.height() * scale).coerceIn(0.05f, 1f)
-
-            val left = (cx - newW / 2f).coerceIn(0f, (1f - newW).coerceAtLeast(0f))
-            val top = (cy - newH / 2f).coerceIn(0f, (1f - newH).coerceAtLeast(0f))
-            focusRect = RectF(left, top, left + newW, top + newH)
-
-            // Update aspect ratio and crop
-            targetAspectRatio = (newW * originalAspectRatio) / newH
-            fullBitmap?.let { backgroundBitmap = applyFocusCrop(it) }
-            onFocusZoomChanged?.invoke()
-            invalidate()
-            return true
-        }
-
-        override fun onScaleEnd(detector: ScaleGestureDetector) {
-            trackPinching = false
-        }
-    })
+    // Accumulate fractional scroll for smooth slow scrolling
+    private var scrollAccumY = 0f
+    private var scrollAccumX = 0f
 
     private fun processTrackpad(event: MotionEvent) {
         val action = event.actionMasked
@@ -525,35 +505,28 @@ class DrawPadView @JvmOverloads constructor(
         when (action) {
             MotionEvent.ACTION_DOWN -> {
                 trackFingerCount = 1
+                trackMaxFingers = 1
                 trackLastX = event.x
                 trackLastY = event.y
                 trackDownX = event.x
                 trackDownY = event.y
                 trackDownTime = System.currentTimeMillis()
                 trackMoved = false
-                trackTwoFingerTapped = false
-                trackPinching = false
             }
 
             MotionEvent.ACTION_POINTER_DOWN -> {
                 trackFingerCount = pointerCount
-                if (pointerCount == 2) {
-                    // Record for two-finger scroll
-                    trackTwoFingerLastY = (event.getY(0) + event.getY(1)) / 2f
-                    trackLastX = (event.getX(0) + event.getX(1)) / 2f
-                    trackLastY = trackTwoFingerLastY
+                if (pointerCount > trackMaxFingers) trackMaxFingers = pointerCount
+                if (pointerCount >= 2) {
+                    trackF0LastX = event.getX(0); trackF0LastY = event.getY(0)
+                    trackF1LastX = event.getX(1); trackF1LastY = event.getY(1)
+                    trackLastDist = fingerDist(event)
                 }
             }
 
             MotionEvent.ACTION_MOVE -> {
-                if (trackPinching) {
-                    // Handled by ScaleGestureDetector
-                    invalidate()
-                    return
-                }
-
-                if (pointerCount == 1 && trackFingerCount == 1) {
-                    // Single finger drag → mouse move
+                if (pointerCount == 1 && trackMaxFingers == 1) {
+                    // --- Single finger drag → mouse move ---
                     val dx = event.x - trackLastX
                     val dy = event.y - trackLastY
                     if (dx * dx + dy * dy > 4f) {
@@ -562,35 +535,73 @@ class DrawPadView @JvmOverloads constructor(
                         trackLastX = event.x
                         trackLastY = event.y
                     }
-                } else if (pointerCount >= 2 && !trackPinching) {
-                    // Two finger drag → scroll
-                    val avgY = (event.getY(0) + event.getY(1)) / 2f
-                    if (trackTwoFingerLastY >= 0) {
-                        val dy = avgY - trackTwoFingerLastY
-                        if (kotlin.math.abs(dy) > 2f) {
+                } else if (pointerCount >= 2) {
+                    val f0x = event.getX(0); val f0y = event.getY(0)
+                    val f1x = event.getX(1); val f1y = event.getY(1)
+                    val dist = fingerDist(event)
+
+                    // Compute how each finger moved
+                    val d0x = f0x - trackF0LastX; val d0y = f0y - trackF0LastY
+                    val d1x = f1x - trackF1LastX; val d1y = f1y - trackF1LastY
+
+                    // Average movement (both fingers moving together = scroll)
+                    val avgDx = (d0x + d1x) / 2f
+                    val avgDy = (d0y + d1y) / 2f
+
+                    // Distance change (fingers apart/together = pinch)
+                    val distDelta = dist - trackLastDist
+                    val isPinch = trackLastDist > 0 && kotlin.math.abs(distDelta) > trackLastDist * pinchThreshold
+
+                    if (isPinch) {
+                        // --- Pinch → zoom (Ctrl+scroll) ---
+                        trackMoved = true
+                        val scaleFactor = dist / trackLastDist
+                        onPinchZoom?.invoke(scaleFactor)
+                    } else {
+                        // --- Two finger drag → scroll ---
+                        // Accumulate for smooth slow scrolling
+                        scrollAccumY += -avgDy * scrollSensitivity / 2f
+                        scrollAccumX += -avgDx * scrollSensitivity / 2f
+
+                        // Send vertical scroll when accumulated enough
+                        val scrollY = scrollAccumY.toInt()
+                        if (scrollY != 0) {
                             trackMoved = true
-                            // Scroll: positive dy = scroll down
-                            val scrollAmount = -(dy / 10f).coerceIn(-127f, 127f)
                             onMouseEvent?.invoke(MouseEvent(
                                 leftButton = false, rightButton = false,
-                                dx = 0f, dy = 0f, scroll = scrollAmount
+                                dx = 0f, dy = 0f, scroll = scrollY.toFloat().coerceIn(-127f, 127f)
                             ))
+                            scrollAccumY -= scrollY
+                        }
+
+                        // Send horizontal scroll (as separate event with negative dx hack)
+                        val scrollX = scrollAccumX.toInt()
+                        if (scrollX != 0) {
+                            trackMoved = true
+                            onMouseEvent?.invoke(MouseEvent(
+                                leftButton = false, rightButton = false,
+                                dx = 0f, dy = 0f,
+                                scroll = 0f,
+                                horizontalScroll = scrollX.toFloat().coerceIn(-127f, 127f)
+                            ))
+                            scrollAccumX -= scrollX
                         }
                     }
-                    trackTwoFingerLastY = avgY
+
+                    trackF0LastX = f0x; trackF0LastY = f0y
+                    trackF1LastX = f1x; trackF1LastY = f1y
+                    trackLastDist = dist
                 }
                 invalidate()
             }
 
             MotionEvent.ACTION_POINTER_UP -> {
-                // A finger lifted but others remain
-                if (trackFingerCount == 2 && !trackMoved) {
-                    trackTwoFingerTapped = true
-                }
-                trackTwoFingerLastY = -1f
+                trackFingerCount = pointerCount - 1
             }
 
             MotionEvent.ACTION_UP -> {
+                scrollAccumX = 0f
+                scrollAccumY = 0f
                 val elapsed = System.currentTimeMillis() - trackDownTime
                 val dist = kotlin.math.hypot(
                     (event.x - trackDownX).toDouble(),
@@ -598,10 +609,9 @@ class DrawPadView @JvmOverloads constructor(
                 ).toFloat()
 
                 if (elapsed < TAP_TIMEOUT && dist < TAP_SLOP && !trackMoved) {
-                    if (trackTwoFingerTapped || trackFingerCount >= 2) {
+                    if (trackMaxFingers >= 2) {
                         // Two finger tap → right click
                         onMouseEvent?.invoke(MouseEvent(leftButton = false, rightButton = true, dx = 0f, dy = 0f))
-                        // Release after brief delay
                         postDelayed({
                             onMouseEvent?.invoke(MouseEvent(leftButton = false, rightButton = false, dx = 0f, dy = 0f))
                         }, 50)
@@ -616,23 +626,27 @@ class DrawPadView @JvmOverloads constructor(
 
                 // Reset
                 trackFingerCount = 0
+                trackMaxFingers = 0
                 trackLastX = -1f
                 trackLastY = -1f
-                trackTwoFingerLastY = -1f
                 trackMoved = false
-                trackTwoFingerTapped = false
-                trackPinching = false
+                trackLastDist = 0f
             }
 
             MotionEvent.ACTION_CANCEL -> {
                 trackFingerCount = 0
-                trackLastX = -1f
-                trackLastY = -1f
-                trackTwoFingerLastY = -1f
+                trackMaxFingers = 0
                 trackMoved = false
-                trackPinching = false
+                trackLastDist = 0f
             }
         }
+    }
+
+    private fun fingerDist(event: MotionEvent): Float {
+        if (event.pointerCount < 2) return 0f
+        val dx = event.getX(0) - event.getX(1)
+        val dy = event.getY(0) - event.getY(1)
+        return kotlin.math.sqrt(dx * dx + dy * dy)
     }
 
     private fun cancelPendingLongPress() {

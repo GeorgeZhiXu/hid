@@ -89,6 +89,7 @@ class MainActivity : AppCompatActivity(),
 
         drawPad.onPenEvent = { event -> handlePenEvent(event) }
         drawPad.onMouseEvent = { event -> handleMouseEvent(event) }
+        drawPad.onPinchZoom = { scaleFactor -> handlePinchZoom(scaleFactor) }
 
         discoverableBtn.setOnClickListener { requestDiscoverable() }
         clearBtn.setOnClickListener { drawPad.clearStrokes() }
@@ -114,6 +115,8 @@ class MainActivity : AppCompatActivity(),
     private fun applySettingsToDrawPad() {
         drawPad.targetAspectRatio = settings.targetAspectRatio.ratio
         drawPad.inputMode = settings.inputMode
+        drawPad.scrollSensitivity = settings.scrollSensitivity
+        drawPad.pinchThreshold = settings.pinchThreshold
     }
 
     // ---- Pen event → BT HID digitizer report ----
@@ -163,8 +166,16 @@ class MainActivity : AppCompatActivity(),
     private fun handleMouseEvent(event: DrawPadView.MouseEvent) {
         if (!hidManager.isConnected) return
 
+        if (event.horizontalScroll != 0f) {
+            // Horizontal scroll: Shift + scroll wheel (macOS convention)
+            hidManager.sendKeyboardReport(HidDescriptor.MOD_LEFT_SHIFT)
+            val scroll = event.horizontalScroll.toInt().coerceIn(-127, 127)
+            hidManager.sendMouseReport(false, false, false, 0, 0, scroll)
+            hidManager.sendKeyboardReport(0)
+            return
+        }
+
         if (event.scroll != 0f) {
-            // Scroll event
             val scroll = event.scroll.toInt().coerceIn(-127, 127)
             hidManager.sendMouseReport(false, false, false, 0, 0, scroll)
             return
@@ -323,6 +334,60 @@ class MainActivity : AppCompatActivity(),
         layout.addView(mouseSeek)
         layout.addView(mouseLabel)
 
+        // Scroll sensitivity
+        layout.addView(TextView(this).apply { text = "Scroll Sensitivity"; setPadding(0, 16, 0, 4) })
+        val scrollSensLabel = TextView(this).apply { text = "Speed: ${"%.1f".format(settings.scrollSensitivity)}x" }
+        val scrollSensSeek = SeekBar(this).apply {
+            max = 100
+            progress = ((settings.scrollSensitivity - 0.5f) / 4.5f * 100).toInt().coerceIn(0, 100)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: SeekBar, p: Int, fromUser: Boolean) {
+                    scrollSensLabel.text = "Speed: ${"%.1f".format(0.5f + p / 100f * 4.5f)}x"
+                }
+                override fun onStartTrackingTouch(sb: SeekBar) {}
+                override fun onStopTrackingTouch(sb: SeekBar) {}
+            })
+        }
+        layout.addView(scrollSensSeek)
+        layout.addView(scrollSensLabel)
+
+        // Pinch sensitivity
+        layout.addView(TextView(this).apply { text = "Pinch Zoom Sensitivity"; setPadding(0, 16, 0, 4) })
+        val pinchSensLabel = TextView(this).apply { text = "Multiplier: ${"%.0f".format(settings.pinchSensitivity)}" }
+        val pinchSensSeek = SeekBar(this).apply {
+            max = 100
+            progress = ((settings.pinchSensitivity - 5f) / 55f * 100).toInt().coerceIn(0, 100)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: SeekBar, p: Int, fromUser: Boolean) {
+                    pinchSensLabel.text = "Multiplier: ${"%.0f".format(5f + p / 100f * 55f)}"
+                }
+                override fun onStartTrackingTouch(sb: SeekBar) {}
+                override fun onStopTrackingTouch(sb: SeekBar) {}
+            })
+        }
+        layout.addView(pinchSensSeek)
+        layout.addView(pinchSensLabel)
+
+        // Pinch threshold
+        layout.addView(TextView(this).apply { text = "Pinch vs Scroll Threshold"; setPadding(0, 16, 0, 4) })
+        val pinchThreshLabel = TextView(this).apply {
+            text = "${"%.1f".format(settings.pinchThreshold * 100)}% (lower = easier to pinch, higher = easier to scroll)"
+        }
+        val pinchThreshSeek = SeekBar(this).apply {
+            max = 100
+            progress = ((settings.pinchThreshold - 0.005f) / 0.045f * 100).toInt().coerceIn(0, 100)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: SeekBar, p: Int, fromUser: Boolean) {
+                    val v = 0.005f + p / 100f * 0.045f
+                    pinchThreshLabel.text = "${"%.1f".format(v * 100)}% (lower = easier to pinch, higher = easier to scroll)"
+                }
+                override fun onStartTrackingTouch(sb: SeekBar) {}
+                override fun onStopTrackingTouch(sb: SeekBar) {}
+            })
+        }
+        layout.addView(pinchThreshSeek)
+        layout.addView(pinchThreshLabel)
+
         val scroll = ScrollView(this).apply { addView(layout) }
 
         AlertDialog.Builder(this)
@@ -337,7 +402,10 @@ class MainActivity : AppCompatActivity(),
                     clearOnScreenshot = clearCheck.isChecked,
                     pressureFloor = floorSeek.progress / 100f,
                     pressureExponent = 0.1f + pressureSeek.progress / 100f * 1.9f,
-                    mouseSensitivity = 0.5f + mouseSeek.progress / 100f * 4.5f
+                    mouseSensitivity = 0.5f + mouseSeek.progress / 100f * 4.5f,
+                    scrollSensitivity = 0.5f + scrollSensSeek.progress / 100f * 4.5f,
+                    pinchSensitivity = 5f + pinchSensSeek.progress / 100f * 55f,
+                    pinchThreshold = 0.005f + pinchThreshSeek.progress / 100f * 0.045f
                 )
                 AppSettings.save(this, settings)
                 applySettingsToDrawPad()
@@ -346,6 +414,44 @@ class MainActivity : AppCompatActivity(),
             }
             .setNegativeButton("Cancel", null)
             .show()
+    }
+
+    // ---- Pinch zoom → Ctrl + scroll (zoom on laptop) ----
+
+    private var ctrlHeld = false
+
+    private var pinchAccum = 0f
+
+    private fun handlePinchZoom(scaleFactor: Float) {
+        if (!hidManager.isConnected) return
+
+        // Press Ctrl if not already held
+        if (!ctrlHeld) {
+            hidManager.sendKeyboardReport(HidDescriptor.MOD_LEFT_CTRL)
+            ctrlHeld = true
+        }
+
+        // Accumulate scale changes for smooth zooming
+        // Reversed: fingers together = zoom in, fingers apart = zoom out
+        pinchAccum += -(scaleFactor - 1f) * settings.pinchSensitivity
+
+        val scroll = pinchAccum.toInt()
+        if (scroll != 0) {
+            hidManager.sendMouseReport(false, false, false, 0, 0, scroll.coerceIn(-20, 20))
+            pinchAccum -= scroll
+        }
+
+        // Release Ctrl after a delay (will be re-pressed if pinch continues)
+        drawPad.removeCallbacks(ctrlReleaseRunnable)
+        drawPad.postDelayed(ctrlReleaseRunnable, 200)
+    }
+
+    private val ctrlReleaseRunnable = Runnable {
+        if (ctrlHeld) {
+            hidManager.sendKeyboardReport(0)
+            ctrlHeld = false
+            pinchAccum = 0f
+        }
     }
 
     // ---- Focus ----

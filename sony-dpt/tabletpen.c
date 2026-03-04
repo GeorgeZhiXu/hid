@@ -40,8 +40,14 @@
 #include <linux/input.h>
 
 /* Bluetooth headers — define manually to avoid dependency on libbluetooth */
+#include <endian.h>
+#ifndef AF_BLUETOOTH
 #define AF_BLUETOOTH 31
+#endif
 #define BTPROTO_L2CAP 0
+#ifndef htobs
+#define htobs(x) htole16(x)
+#endif
 #define PSM_HID_CTRL 0x11
 #define PSM_HID_INTR 0x13
 
@@ -225,24 +231,129 @@ static void build_mouse_report(unsigned char *buf, int left, int right, int midd
     buf[3] = (unsigned char)(signed char)scroll;
 }
 
+/* ---- HID descriptor (same as Android app) ---- */
+
+static const unsigned char hid_descriptor[] = {
+    /* Digitizer Pen (Report ID 1) */
+    0x05, 0x0D, 0x09, 0x02, 0xA1, 0x01, 0x85, 0x01,
+    0x09, 0x20, 0xA1, 0x00,
+    0x09, 0x42, 0x09, 0x44, 0x09, 0x32,
+    0x15, 0x00, 0x25, 0x01, 0x75, 0x01, 0x95, 0x03, 0x81, 0x02,
+    0x75, 0x05, 0x95, 0x01, 0x81, 0x03,
+    0x05, 0x01, 0x09, 0x30, 0x15, 0x00, 0x26, 0xFF, 0x7F,
+    0x75, 0x10, 0x95, 0x01, 0x81, 0x02,
+    0x09, 0x31, 0x81, 0x02,
+    0x05, 0x0D, 0x09, 0x30, 0x26, 0xFF, 0x0F, 0x81, 0x02,
+    0xC0, 0xC0,
+    /* Mouse (Report ID 2) */
+    0x05, 0x01, 0x09, 0x02, 0xA1, 0x01, 0x85, 0x02,
+    0x09, 0x01, 0xA1, 0x00,
+    0x05, 0x09, 0x19, 0x01, 0x29, 0x03,
+    0x15, 0x00, 0x25, 0x01, 0x75, 0x01, 0x95, 0x03, 0x81, 0x02,
+    0x75, 0x05, 0x95, 0x01, 0x81, 0x03,
+    0x05, 0x01, 0x09, 0x30, 0x09, 0x31,
+    0x15, 0x81, 0x25, 0x7F, 0x75, 0x08, 0x95, 0x02, 0x81, 0x06,
+    0x09, 0x38, 0x15, 0x81, 0x25, 0x7F, 0x75, 0x08, 0x95, 0x01, 0x81, 0x06,
+    0xC0, 0xC0,
+    /* Keyboard (Report ID 3) */
+    0x05, 0x01, 0x09, 0x06, 0xA1, 0x01, 0x85, 0x03,
+    0x05, 0x07, 0x19, 0xE0, 0x29, 0xE7,
+    0x15, 0x00, 0x25, 0x01, 0x75, 0x01, 0x95, 0x08, 0x81, 0x02,
+    0x75, 0x08, 0x95, 0x01, 0x81, 0x03,
+    0x05, 0x07, 0x19, 0x00, 0x29, 0xFF,
+    0x15, 0x00, 0x26, 0xFF, 0x00,
+    0x75, 0x08, 0x95, 0x06, 0x81, 0x00,
+    0xC0,
+};
+
 /* ---- Bluetooth ---- */
+
+static void write_sdp_record(void) {
+    /* Write SDP XML with embedded HID descriptor */
+    FILE *f = fopen("/tmp/tabletpen_sdp.xml", "w");
+    if (!f) return;
+
+    /* Convert HID descriptor to hex string */
+    char hex[sizeof(hid_descriptor) * 2 + 1];
+    for (size_t i = 0; i < sizeof(hid_descriptor); i++)
+        sprintf(hex + i * 2, "%02x", hid_descriptor[i]);
+
+    fprintf(f,
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\n"
+        "<record>\n"
+        "  <attribute id=\"0x0001\"><sequence><uuid value=\"0x1124\" /></sequence></attribute>\n"
+        "  <attribute id=\"0x0004\"><sequence>\n"
+        "    <sequence><uuid value=\"0x0100\" /><uint16 value=\"0x0011\" /></sequence>\n"
+        "    <sequence><uuid value=\"0x0011\" /></sequence>\n"
+        "  </sequence></attribute>\n"
+        "  <attribute id=\"0x0005\"><sequence><uuid value=\"0x1002\" /></sequence></attribute>\n"
+        "  <attribute id=\"0x0006\"><sequence>\n"
+        "    <uint16 value=\"0x656e\" /><uint16 value=\"0x006a\" /><uint16 value=\"0x0100\" />\n"
+        "  </sequence></attribute>\n"
+        "  <attribute id=\"0x0009\"><sequence><sequence>\n"
+        "    <uuid value=\"0x1124\" /><uint16 value=\"0x0100\" />\n"
+        "  </sequence></sequence></attribute>\n"
+        "  <attribute id=\"0x000d\"><sequence><sequence>\n"
+        "    <sequence><uuid value=\"0x0100\" /><uint16 value=\"0x0013\" /></sequence>\n"
+        "    <sequence><uuid value=\"0x0011\" /></sequence>\n"
+        "  </sequence></sequence></attribute>\n"
+        "  <attribute id=\"0x0100\"><text value=\"TabletPen\" /></attribute>\n"
+        "  <attribute id=\"0x0101\"><text value=\"HID Digitizer Tablet\" /></attribute>\n"
+        "  <attribute id=\"0x0102\"><text value=\"TabletPen\" /></attribute>\n"
+        "  <attribute id=\"0x0200\"><uint16 value=\"0x0100\" /></attribute>\n"
+        "  <attribute id=\"0x0201\"><uint16 value=\"0x0005\" /></attribute>\n"
+        "  <attribute id=\"0x0202\"><uint16 value=\"0x00c5\" /></attribute>\n"
+        "  <attribute id=\"0x0203\"><boolean value=\"true\" /></attribute>\n"
+        "  <attribute id=\"0x0204\"><boolean value=\"true\" /></attribute>\n"
+        "  <attribute id=\"0x0205\"><boolean value=\"false\" /></attribute>\n"
+        "  <attribute id=\"0x0206\"><sequence><sequence>\n"
+        "    <uint8 value=\"0x22\" />\n"
+        "    <text encoding=\"hex\" value=\"%s\" />\n"
+        "  </sequence></sequence></attribute>\n"
+        "  <attribute id=\"0x0207\"><sequence><sequence>\n"
+        "    <uint16 value=\"0x0409\" /><uint16 value=\"0x0100\" />\n"
+        "  </sequence></sequence></attribute>\n"
+        "  <attribute id=\"0x020b\"><uint16 value=\"0x0100\" /></attribute>\n"
+        "  <attribute id=\"0x020c\"><uint16 value=\"0x0c80\" /></attribute>\n"
+        "  <attribute id=\"0x020d\"><boolean value=\"false\" /></attribute>\n"
+        "  <attribute id=\"0x020e\"><boolean value=\"true\" /></attribute>\n"
+        "</record>\n", hex);
+    fclose(f);
+}
 
 static void setup_bluetooth(void) {
     printf("Setting up Bluetooth...\n");
-    system("svc bluetooth enable 2>/dev/null");
-    sleep(2);
+
+    /* Ensure HCI is up — works with or without bluetoothd */
     system("hciconfig hci0 up 2>/dev/null");
+    sleep(1);
+
+    /* Set device class: 0x002540 = Peripheral (Tablet digitizer) */
+    system("hciconfig hci0 class 0x002540 2>/dev/null");
+
+    /* Set device name */
+    system("hciconfig hci0 name 'TabletPen' 2>/dev/null");
+
+    /* Make discoverable (piscan) and enable SSP */
     system("hciconfig hci0 piscan 2>/dev/null");
-    system("hciconfig hci0 name 'TabletPen DPT' 2>/dev/null");
+    system("hciconfig hci0 sspmode 1 2>/dev/null");
+
     printf("Bluetooth discoverable\n");
 }
 
 static int open_l2cap_server(int psm) {
     int fd = socket(AF_BLUETOOTH, SOCK_SEQPACKET, BTPROTO_L2CAP);
-    if (fd < 0) return -1;
+    if (fd < 0) { fprintf(stderr, "socket() failed: %s\n", strerror(errno)); return -1; }
 
     int reuse = 1;
     setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+
+    /* Set Bluetooth security level to medium (encrypted) */
+    struct {
+        unsigned char level;
+        unsigned char key_size;
+    } bt_sec = { 2, 0 }; /* BT_SECURITY_MEDIUM = 2 */
+    setsockopt(fd, 274 /* SOL_BLUETOOTH */, 4 /* BT_SECURITY */, &bt_sec, sizeof(bt_sec));
 
     struct sockaddr_l2 addr;
     memset(&addr, 0, sizeof(addr));
@@ -250,13 +361,16 @@ static int open_l2cap_server(int psm) {
     addr.l2_psm = htobs(psm);
 
     if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        fprintf(stderr, "bind(PSM %d) failed: %s\n", psm, strerror(errno));
         close(fd);
         return -1;
     }
     if (listen(fd, 1) < 0) {
+        fprintf(stderr, "listen(PSM %d) failed: %s\n", psm, strerror(errno));
         close(fd);
         return -1;
     }
+    printf("L2CAP server on PSM %d ready\n", psm);
     return fd;
 }
 
@@ -310,9 +424,12 @@ static void run_loop(const struct settings *s, int evdev_fd, int intr_fd,
     struct input_event ev;
     unsigned char packet[9];
 
+    printf("Entering read loop (sizeof(input_event)=%zu)...\n", sizeof(ev));
+    int event_count = 0;
     while (running) {
         ssize_t n = read(evdev_fd, &ev, sizeof(ev));
-        if (n < (ssize_t)sizeof(ev)) continue;
+        if (n < (ssize_t)sizeof(ev)) { printf("read: %zd (expected %zu)\n", n, sizeof(ev)); continue; }
+        if (event_count++ < 5) printf("Event: type=%d code=%d value=%d\n", ev.type, ev.code, ev.value);
 
         if (ev.type == EV_ABS) {
             if (ev.code == ABS_X) st.x = ev.value;
@@ -382,7 +499,13 @@ static void run_loop(const struct settings *s, int evdev_fd, int intr_fd,
                 packet[0] = 0xA1;
                 packet[1] = REPORT_ID_DIGITIZER;
                 build_digitizer_report(packet + 2, st.tip_down, st.barrel, st.in_range, hx, hy, hp);
-                if (send(intr_fd, packet, 9, 0) < 0) return;
+                ssize_t sent = send(intr_fd, packet, 9, 0);
+                if (sent < 0) {
+                    fprintf(stderr, "send failed: %s (errno=%d)\n", strerror(errno), errno);
+                    return;
+                }
+                if (event_count < 10) printf("Sent %zd bytes: %02x %02x %02x%02x %02x%02x %02x%02x %02x\n",
+                    sent, packet[0],packet[1],packet[2],packet[3],packet[4],packet[5],packet[6],packet[7],packet[8]);
             }
         }
     }
@@ -402,6 +525,8 @@ static void usage(const char *prog) {
 }
 
 int main(int argc, char *argv[]) {
+    setbuf(stdout, NULL);
+    setbuf(stderr, NULL);
     struct settings s;
     default_settings(&s);
     load_settings(&s);
@@ -478,7 +603,9 @@ int main(int argc, char *argv[]) {
 
         int intr_fd = accept(intr_srv, (struct sockaddr *)&peer, &peerlen);
         if (intr_fd < 0) { close(ctrl_fd); if (running) perror("accept intr"); continue; }
-        printf("Connected! Reading pen input...\n");
+        printf("Connected! Waiting for HID channel setup...\n");
+        sleep(2); /* Give macOS time to set up the HID channel */
+        printf("Reading pen input...\n");
 
         int evdev_fd = open(s.device_path, O_RDONLY);
         if (evdev_fd < 0) {
@@ -488,8 +615,8 @@ int main(int argc, char *argv[]) {
             continue;
         }
 
+        /* Don't use EVIOCGRAB — read events alongside xochitl */
         run_loop(&s, evdev_fd, intr_fd, x_min, x_max, y_min, y_max, p_min, p_max);
-
         close(evdev_fd);
         close(ctrl_fd);
         close(intr_fd);

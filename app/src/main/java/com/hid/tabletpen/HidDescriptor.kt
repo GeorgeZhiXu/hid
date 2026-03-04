@@ -23,6 +23,15 @@ object HidDescriptor {
     const val REPORT_ID_MOUSE: Int = 2
     const val MOUSE_REPORT_SIZE: Int = 4
 
+    const val REPORT_ID_KEYBOARD: Int = 3
+    const val KEYBOARD_REPORT_SIZE: Int = 8  // 1 modifier + 1 reserved + 6 keycodes
+
+    // Keyboard modifier bits
+    const val MOD_LEFT_CTRL: Int = 0x01
+    const val MOD_LEFT_SHIFT: Int = 0x02
+    const val MOD_LEFT_ALT: Int = 0x04
+    const val MOD_LEFT_GUI: Int = 0x08
+
     const val X_MAX: Int = 32767
     const val Y_MAX: Int = 32767
     const val PRESSURE_MAX: Int = 4095
@@ -121,6 +130,39 @@ object HidDescriptor {
         0x81, 0x06,       // Input (Data, Variable, Relative)
 
         0xC0,             // End Collection (Physical)
+        0xC0,             // End Collection (Application)
+
+        // ===== KEYBOARD (Report ID 3) =====
+        0x05, 0x01,       // Usage Page (Generic Desktop)
+        0x09, 0x06,       // Usage (Keyboard)
+        0xA1, 0x01,       // Collection (Application)
+        0x85, 0x03,       // Report ID (3)
+
+        // --- Modifier keys: 8 bits ---
+        0x05, 0x07,       // Usage Page (Keyboard/Keypad)
+        0x19, 0xE0,       // Usage Minimum (Left Control)
+        0x29, 0xE7,       // Usage Maximum (Right GUI)
+        0x15, 0x00,       // Logical Minimum (0)
+        0x25, 0x01,       // Logical Maximum (1)
+        0x75, 0x01,       // Report Size (1)
+        0x95, 0x08,       // Report Count (8)
+        0x81, 0x02,       // Input (Data, Variable, Absolute)
+
+        // --- Reserved byte ---
+        0x75, 0x08,       // Report Size (8)
+        0x95, 0x01,       // Report Count (1)
+        0x81, 0x03,       // Input (Constant)
+
+        // --- Key codes: 6 bytes ---
+        0x05, 0x07,       // Usage Page (Keyboard/Keypad)
+        0x19, 0x00,       // Usage Minimum (0)
+        0x29, 0xFF,       // Usage Maximum (255)
+        0x15, 0x00,       // Logical Minimum (0)
+        0x26, 0xFF, 0x00, // Logical Maximum (255)
+        0x75, 0x08,       // Report Size (8)
+        0x95, 0x06,       // Report Count (6)
+        0x81, 0x00,       // Input (Data, Array)
+
         0xC0              // End Collection (Application)
     )
 
@@ -171,6 +213,13 @@ object HidDescriptor {
             dy.coerceIn(-127, 127).toByte(),
             scroll.coerceIn(-127, 127).toByte()
         )
+    }
+
+    fun buildKeyboardReport(modifiers: Int): ByteArray {
+        return ByteArray(KEYBOARD_REPORT_SIZE).also {
+            it[0] = modifiers.toByte()  // modifier keys
+            // bytes 1-7 are 0 (reserved + no key codes)
+        }
     }
 
     private fun bytes(vararg values: Int): ByteArray =
