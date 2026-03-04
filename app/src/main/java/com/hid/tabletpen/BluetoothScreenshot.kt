@@ -1,24 +1,36 @@
 package com.hid.tabletpen
 
+import android.annotation.SuppressLint
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothManager
+import android.bluetooth.BluetoothServerSocket
+import android.bluetooth.BluetoothSocket
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
-import java.net.HttpURLConnection
-import java.net.URL
+import java.io.InputStream
+import java.nio.ByteBuffer
+import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Requests screenshots from the Mac over HTTP.
- * Uses ADB reverse tunnel: tablet localhost:9877 → Mac localhost:9877
- * No WiFi needed — works over USB or ADB wireless debug.
+ * Bluetooth RFCOMM screenshot service.
+ *
+ * Android runs an RFCOMM server. Mac's screenshot-server connects to it.
+ * When user taps Screenshot, Android sends "screenshot\n" command,
+ * Mac takes screenshot and sends back 4-byte size + JPEG data.
  */
-class BluetoothScreenshot {
+@SuppressLint("MissingPermission")
+class BluetoothScreenshot(private val context: Context) {
 
     companion object {
-        private const val TAG = "Screenshot"
-        private const val SCREENSHOT_URL = "http://127.0.0.1:9877/"
-        private const val TIMEOUT_MS = 10000
+        private const val TAG = "BtScreenshot"
+        private val SERVICE_UUID = UUID.fromString("A5D3E9F0-7B1C-4C2E-9F3A-B8C1D2E4F6A7")
+        private const val SERVICE_NAME = "TabletPen Screenshot"
     }
 
     interface Listener {
@@ -29,40 +41,118 @@ class BluetoothScreenshot {
     var listener: Listener? = null
     private val mainHandler = Handler(Looper.getMainLooper())
 
+    private val adapter: BluetoothAdapter? by lazy {
+        (context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
+    }
+
+    private val running = AtomicBoolean(false)
+    private val connectedSocket = AtomicReference<BluetoothSocket?>(null)
+
+    val isMacConnected: Boolean get() = connectedSocket.get()?.isConnected == true
+
+    /**
+     * Start the RFCOMM server. Call once after BT is ready.
+     * Mac's screenshot-server will find and connect to us via SDP.
+     */
+    fun startServer() {
+        if (running.getAndSet(true)) return
+        Thread({ serverLoop() }, "BtScreenshot-Server").start()
+    }
+
+    fun stopServer() {
+        running.set(false)
+        try { connectedSocket.get()?.close() } catch (_: Exception) {}
+    }
+
+    private fun serverLoop() {
+        val bt = adapter ?: return
+
+        while (running.get()) {
+            try {
+                Log.i(TAG, "Starting RFCOMM server (UUID=$SERVICE_UUID)...")
+                val server: BluetoothServerSocket =
+                    bt.listenUsingInsecureRfcommWithServiceRecord(SERVICE_NAME, SERVICE_UUID)
+
+                Log.i(TAG, "Waiting for Mac to connect...")
+                val socket = server.accept()
+                server.close()
+
+                connectedSocket.set(socket)
+                Log.i(TAG, "Mac connected: ${socket.remoteDevice.name}")
+                mainHandler.post { listener?.onScreenshotError("Mac connected") }
+
+                // Keep alive — wait for disconnect
+                try {
+                    val input = socket.inputStream
+                    while (running.get() && socket.isConnected) {
+                        // Check if socket is still alive by reading with timeout
+                        Thread.sleep(1000)
+                    }
+                } catch (_: Exception) {}
+
+                Log.i(TAG, "Mac disconnected")
+                connectedSocket.set(null)
+            } catch (e: Exception) {
+                if (running.get()) {
+                    Log.w(TAG, "Server error: ${e.message}")
+                    Thread.sleep(2000)
+                }
+            }
+        }
+    }
+
+    /**
+     * Request a screenshot. Sends command over existing RFCOMM connection.
+     */
     fun requestScreenshot() {
+        val socket = connectedSocket.get()
+        if (socket == null || !socket.isConnected) {
+            mainHandler.post { listener?.onScreenshotError("Mac not connected. Run screenshot-server on Mac.") }
+            return
+        }
+
         Thread({
             try {
-                doRequest()
+                doRequest(socket)
             } catch (e: Exception) {
                 Log.e(TAG, "Screenshot failed", e)
                 mainHandler.post { listener?.onScreenshotError(e.message ?: "Unknown error") }
             }
-        }, "Screenshot").start()
+        }, "BtScreenshot-Req").start()
     }
 
-    private fun doRequest() {
-        Log.i(TAG, "Requesting screenshot...")
-        val url = URL(SCREENSHOT_URL)
-        val conn = url.openConnection() as HttpURLConnection
-        conn.connectTimeout = TIMEOUT_MS
-        conn.readTimeout = TIMEOUT_MS
+    private fun doRequest(socket: BluetoothSocket) {
+        synchronized(socket) {
+            Log.i(TAG, "Sending screenshot command...")
+            socket.outputStream.write("screenshot\n".toByteArray())
+            socket.outputStream.flush()
 
-        try {
-            conn.connect()
-            if (conn.responseCode != 200) {
-                throw Exception("HTTP ${conn.responseCode}")
+            val input = socket.inputStream
+            val sizeBytes = readExact(input, 4)
+            val size = ByteBuffer.wrap(sizeBytes).int
+            Log.i(TAG, "Receiving $size bytes...")
+
+            if (size <= 0 || size > 20 * 1024 * 1024) {
+                throw Exception("Invalid size: $size")
             }
 
-            val data = conn.inputStream.readBytes()
-            Log.i(TAG, "Received ${data.size} bytes, decoding...")
-
-            val bitmap = BitmapFactory.decodeByteArray(data, 0, data.size)
+            val jpegData = readExact(input, size)
+            val bitmap = BitmapFactory.decodeByteArray(jpegData, 0, jpegData.size)
                 ?: throw Exception("Failed to decode JPEG")
 
             Log.i(TAG, "Screenshot: ${bitmap.width}x${bitmap.height}")
             mainHandler.post { listener?.onScreenshotReceived(bitmap) }
-        } finally {
-            conn.disconnect()
         }
+    }
+
+    private fun readExact(input: InputStream, count: Int): ByteArray {
+        val buf = ByteArray(count)
+        var offset = 0
+        while (offset < count) {
+            val n = input.read(buf, offset, count - offset)
+            if (n <= 0) throw Exception("Stream ended after $offset/$count bytes")
+            offset += n
+        }
+        return buf
     }
 }

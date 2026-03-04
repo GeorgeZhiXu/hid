@@ -70,7 +70,7 @@ class MainActivity : AppCompatActivity(),
         hidManager.listener = this
         hidManager.setAutoConnectDevice(AppSettings.loadLastDevice(this))
 
-        btScreenshot = BluetoothScreenshot()
+        btScreenshot = BluetoothScreenshot(this)
         btScreenshot.listener = object : BluetoothScreenshot.Listener {
             override fun onScreenshotReceived(bitmap: android.graphics.Bitmap) {
                 drawPad.setScreenshot(bitmap)
@@ -84,6 +84,7 @@ class MainActivity : AppCompatActivity(),
                 screenshotBtn.isEnabled = true
             }
         }
+        btScreenshot.startServer()
 
         applySettingsToDrawPad()
 
@@ -109,6 +110,7 @@ class MainActivity : AppCompatActivity(),
 
     override fun onDestroy() {
         super.onDestroy()
+        btScreenshot.stopServer()
         hidManager.stop()
     }
 
@@ -478,6 +480,10 @@ class MainActivity : AppCompatActivity(),
     // ---- Screenshot ----
 
     private fun onScreenshotClicked() {
+        if (!btScreenshot.isMacConnected) {
+            statusText.text = "Mac not connected. Run ./screenshot-server on Mac."
+            return
+        }
         screenshotBtn.text = "Capturing..."
         screenshotBtn.isEnabled = false
         btScreenshot.requestScreenshot()
