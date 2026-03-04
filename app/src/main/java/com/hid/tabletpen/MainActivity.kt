@@ -523,7 +523,10 @@ class MainActivity : AppCompatActivity(),
 
     @SuppressLint("SetTextI18n")
     private fun onScreenshotClicked() {
-        if (!btScreenshot.isMacConnected) return
+        if (!btScreenshot.isMacConnected) {
+            android.widget.Toast.makeText(this, "Mac not connected. Run ./screenshot-server on Mac.", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
         screenshotBtn.text = "Capturing..."
         screenshotBtn.isEnabled = false
         btScreenshot.requestScreenshot()
@@ -677,13 +680,8 @@ class MainActivity : AppCompatActivity(),
     @SuppressLint("SetTextI18n")
     private fun updateScreenshotBtn() {
         if (!screenshotBtn.isEnabled) return  // currently capturing
-        if (btScreenshot.isMacConnected) {
-            screenshotBtn.text = "Screenshot"
-            screenshotBtn.isEnabled = true
-        } else {
-            screenshotBtn.text = "No Mac"
-            screenshotBtn.isEnabled = false
-        }
+        screenshotBtn.text = "Screenshot"
+        screenshotBtn.isEnabled = true
     }
 
     private fun startDotAnimation() {
