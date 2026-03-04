@@ -86,8 +86,9 @@ class MainActivity : AppCompatActivity(),
         hidManager.listener = this
         hidManager.setAutoConnectDevice(AppSettings.loadLastDevice(this))
 
-        // Device selector
+        // Device selector — seed from bonded devices if known list is empty
         knownDevices = AppSettings.loadKnownDevices(this)
+        seedKnownDevicesFromBonded()
         refreshDeviceSpinner()
         deviceSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, pos: Int, id: Long) {
@@ -537,12 +538,13 @@ class MainActivity : AppCompatActivity(),
 
     @SuppressLint("MissingPermission")
     override fun onDeviceConnected(device: BluetoothDevice) {
-        AppSettings.saveLastDevice(this, device.address)
-        hidManager.setAutoConnectDevice(device.address)
-        val name = device.name ?: "Unknown"
-        AppSettings.saveKnownDevice(this, device.address, name)
-        knownDevices[device.address] = name
+        val address = device.address
+        val name = try { device.name } catch (_: Exception) { null } ?: "Unknown"
         runOnUiThread {
+            AppSettings.saveLastDevice(this, address)
+            AppSettings.saveKnownDevice(this, address, name)
+            hidManager.setAutoConnectDevice(address)
+            knownDevices[address] = name
             refreshDeviceSpinner()
             updateUI()
         }
@@ -562,9 +564,41 @@ class MainActivity : AppCompatActivity(),
     // ---- Device management ----
 
     @SuppressLint("MissingPermission")
+    private fun seedKnownDevicesFromBonded() {
+        // On upgrade from old version, known_devices is empty but last_device may exist.
+        // Also seed from Bluetooth bonded devices so the spinner is pre-populated.
+        val lastAddr = AppSettings.loadLastDevice(this)
+        val adapter = (getSystemService(BLUETOOTH_SERVICE) as? android.bluetooth.BluetoothManager)?.adapter
+            ?: return
+        try {
+            for (device in adapter.bondedDevices) {
+                val addr = device.address
+                if (addr !in knownDevices) {
+                    // Only add if it was our last device (we know it's relevant)
+                    if (addr == lastAddr) {
+                        val name = try { device.name } catch (_: Exception) { null } ?: "Unknown"
+                        knownDevices[addr] = name
+                        AppSettings.saveKnownDevice(this, addr, name)
+                    }
+                }
+            }
+        } catch (_: SecurityException) {
+            // Permission not yet granted
+        }
+    }
+
+    @SuppressLint("MissingPermission")
     private fun refreshDeviceSpinner() {
-        deviceAddresses = knownDevices.keys.toList()
+        // Defensive: ensure connected device is always in known devices
         val connectedAddr = hidManager.connectedDeviceAddress
+        val connectedName = hidManager.connectedDeviceName
+        if (connectedAddr != null && connectedAddr !in knownDevices) {
+            val name = connectedName ?: "Unknown"
+            knownDevices[connectedAddr] = name
+            AppSettings.saveKnownDevice(this, connectedAddr, name)
+        }
+
+        deviceAddresses = knownDevices.keys.toList()
         val modeName = if (settings.inputMode == InputMode.DIGITIZER) "Pen" else "Mouse"
 
         val labels = deviceAddresses.map { addr ->
