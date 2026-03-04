@@ -1,10 +1,22 @@
 package com.hid.tabletpen
 
 import android.content.Context
+import org.json.JSONObject
 
 enum class InputMode { DIGITIZER, MOUSE }
 
 enum class OrientationMode { AUTO, PORTRAIT, LANDSCAPE }
+
+enum class CursorStyle {
+    NONE,       // invisible
+    CROSSHAIR,  // current default: circle + crosshair lines
+    DOT,        // small solid dot
+    CIRCLE;     // small hollow circle
+
+    companion object {
+        val LABELS = listOf("None", "Crosshair", "Dot", "Circle")
+    }
+}
 
 data class AspectRatio(val w: Int, val h: Int) {
     val ratio: Float get() = w.toFloat() / h.toFloat()
@@ -29,7 +41,8 @@ data class AppSettings(
     val mouseSensitivity: Float = 2.0f,
     val scrollSensitivity: Float = 2.0f,    // scroll speed multiplier (0.5–5.0)
     val pinchSensitivity: Float = 30f,      // pinch zoom multiplier (5–60)
-    val pinchThreshold: Float = 0.01f       // min distance-change ratio to trigger pinch (0.005–0.05)
+    val pinchThreshold: Float = 0.01f,      // min distance-change ratio to trigger pinch (0.005–0.05)
+    val cursorStyle: CursorStyle = CursorStyle.CROSSHAIR
 ) {
     companion object {
         private const val PREFS = "tabletpen_settings"
@@ -45,7 +58,9 @@ data class AppSettings(
         private const val KEY_SCROLL_SENS = "scroll_sens"
         private const val KEY_PINCH_SENS = "pinch_sens"
         private const val KEY_PINCH_THRESH = "pinch_thresh"
+        private const val KEY_CURSOR_STYLE = "cursor_style"
         private const val KEY_LAST_DEVICE = "last_device"
+        private const val KEY_KNOWN_DEVICES = "known_devices"
 
         fun loadLastDevice(context: Context): String? {
             return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -55,6 +70,42 @@ data class AppSettings(
         fun saveLastDevice(context: Context, address: String?) {
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
                 .putString(KEY_LAST_DEVICE, address)
+                .apply()
+        }
+
+        /** Load known devices as address → name map */
+        fun loadKnownDevices(context: Context): LinkedHashMap<String, String> {
+            val json = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(KEY_KNOWN_DEVICES, null) ?: return linkedMapOf()
+            return try {
+                val obj = JSONObject(json)
+                val map = linkedMapOf<String, String>()
+                obj.keys().forEach { key -> map[key] = obj.getString(key) }
+                map
+            } catch (_: Exception) {
+                linkedMapOf()
+            }
+        }
+
+        /** Add or update a known device */
+        fun saveKnownDevice(context: Context, address: String, name: String) {
+            val devices = loadKnownDevices(context)
+            devices[address] = name
+            val obj = JSONObject()
+            devices.forEach { (k, v) -> obj.put(k, v) }
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                .putString(KEY_KNOWN_DEVICES, obj.toString())
+                .apply()
+        }
+
+        /** Remove a known device */
+        fun removeKnownDevice(context: Context, address: String) {
+            val devices = loadKnownDevices(context)
+            devices.remove(address)
+            val obj = JSONObject()
+            devices.forEach { (k, v) -> obj.put(k, v) }
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                .putString(KEY_KNOWN_DEVICES, obj.toString())
                 .apply()
         }
 
@@ -71,7 +122,8 @@ data class AppSettings(
                 mouseSensitivity = p.getFloat(KEY_MOUSE_SENS, 2.0f),
                 scrollSensitivity = p.getFloat(KEY_SCROLL_SENS, 2.0f),
                 pinchSensitivity = p.getFloat(KEY_PINCH_SENS, 30f),
-                pinchThreshold = p.getFloat(KEY_PINCH_THRESH, 0.01f)
+                pinchThreshold = p.getFloat(KEY_PINCH_THRESH, 0.01f),
+                cursorStyle = CursorStyle.entries.getOrElse(p.getInt(KEY_CURSOR_STYLE, 1)) { CursorStyle.CROSSHAIR }
             )
         }
 
@@ -89,6 +141,7 @@ data class AppSettings(
                 .putFloat(KEY_SCROLL_SENS, s.scrollSensitivity)
                 .putFloat(KEY_PINCH_SENS, s.pinchSensitivity)
                 .putFloat(KEY_PINCH_THRESH, s.pinchThreshold)
+                .putInt(KEY_CURSOR_STYLE, s.cursorStyle.ordinal)
                 .apply()
         }
     }

@@ -48,6 +48,7 @@ class DrawPadView @JvmOverloads constructor(
     // ---- Settings ----
 
     var inputMode: InputMode = InputMode.DIGITIZER
+    var cursorStyle: CursorStyle = CursorStyle.CROSSHAIR
 
     var targetAspectRatio: Float = 16f / 10f
         set(value) {
@@ -189,6 +190,17 @@ class DrawPadView @JvmOverloads constructor(
         strokeWidth = 2f
     }
 
+    private val cursorDotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(200, 100, 180, 255)
+        style = Paint.Style.FILL
+    }
+
+    private val cursorCirclePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(180, 100, 180, 255)
+        style = Paint.Style.STROKE
+        strokeWidth = 2f
+    }
+
     private val infoPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.argb(180, 200, 200, 200)
         textSize = 32f
@@ -215,6 +227,12 @@ class DrawPadView @JvmOverloads constructor(
     private var isDown = false
     private var lastToolType = MotionEvent.TOOL_TYPE_UNKNOWN
 
+    // Digitizer click stabilization: dead zone on initial pen-down
+    private var penDownX = 0f
+    private var penDownY = 0f
+    private var penStabilized = false  // true once movement exceeded slop
+    private val DIGITIZER_CLICK_SLOP = 25f  // px squared (~5px linear)
+
     // ---- Mouse mode state ----
 
     private var lastMouseX = -1f
@@ -225,6 +243,15 @@ class DrawPadView @JvmOverloads constructor(
     private val longPressHandler = Handler(Looper.getMainLooper())
     private val LONG_PRESS_TIMEOUT = 400L
     private val LONG_PRESS_MOVE_THRESHOLD = 25f // px squared
+
+    // Click detection: defer button-down to distinguish click from drag
+    private var mouseDownX = 0f
+    private var mouseDownY = 0f
+    private var mouseDownTime = 0L
+    private var mouseClickPending = false   // waiting to see if this is click or drag
+    private var mouseDragging = false       // movement exceeded slop → dragging
+    private val MOUSE_CLICK_SLOP = 64f      // px squared (~8px linear)
+    private val MOUSE_CLICK_TIMEOUT = 300L  // ms — held longer = press-and-hold
 
     // ---- Lifecycle ----
 
@@ -366,36 +393,67 @@ class DrawPadView @JvmOverloads constructor(
         action: Int, x: Float, y: Float, pressure: Float,
         buttonState: Int, toolType: Int
     ) {
-        val nx = ((x - activeRect.left) / activeRect.width()).coerceIn(0f, 1f)
-        val ny = ((y - activeRect.top) / activeRect.height()).coerceIn(0f, 1f)
         val barrel = buttonState and MotionEvent.BUTTON_STYLUS_PRIMARY != 0
 
         when (action) {
             MotionEvent.ACTION_DOWN -> {
                 isDown = true
+                penDownX = x
+                penDownY = y
+                penStabilized = false
                 path.moveTo(x, y)
                 lastX = x
                 lastY = y
+                val nx = ((x - activeRect.left) / activeRect.width()).coerceIn(0f, 1f)
+                val ny = ((y - activeRect.top) / activeRect.height()).coerceIn(0f, 1f)
                 dispatchPen(tipDown = true, barrel = barrel, inRange = true, nx, ny, pressure, toolType)
             }
             MotionEvent.ACTION_MOVE -> {
                 if (isDown) {
-                    path.quadTo(lastX, lastY, (x + lastX) / 2, (y + lastY) / 2)
-                    lastX = x
-                    lastY = y
+                    val distFromDown = (x - penDownX) * (x - penDownX) + (y - penDownY) * (y - penDownY)
+                    if (!penStabilized && distFromDown <= DIGITIZER_CLICK_SLOP) {
+                        // Within dead zone: send start position to stabilize tap
+                        val nx = ((penDownX - activeRect.left) / activeRect.width()).coerceIn(0f, 1f)
+                        val ny = ((penDownY - activeRect.top) / activeRect.height()).coerceIn(0f, 1f)
+                        dispatchPen(tipDown = true, barrel = barrel, inRange = true, nx, ny, pressure, toolType)
+                    } else {
+                        // Exceeded dead zone: track actual position
+                        if (!penStabilized) {
+                            penStabilized = true
+                            // Update path start to actual pen-down position
+                            lastX = penDownX
+                            lastY = penDownY
+                        }
+                        path.quadTo(lastX, lastY, (x + lastX) / 2, (y + lastY) / 2)
+                        lastX = x
+                        lastY = y
+                        val nx = ((x - activeRect.left) / activeRect.width()).coerceIn(0f, 1f)
+                        val ny = ((y - activeRect.top) / activeRect.height()).coerceIn(0f, 1f)
+                        dispatchPen(tipDown = true, barrel = barrel, inRange = true, nx, ny, pressure, toolType)
+                    }
+                } else {
+                    val nx = ((x - activeRect.left) / activeRect.width()).coerceIn(0f, 1f)
+                    val ny = ((y - activeRect.top) / activeRect.height()).coerceIn(0f, 1f)
+                    dispatchPen(tipDown = false, barrel = barrel, inRange = true, nx, ny, pressure, toolType)
                 }
-                dispatchPen(tipDown = isDown, barrel = barrel, inRange = true, nx, ny, pressure, toolType)
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 isDown = false
+                penStabilized = false
+                val nx = ((x - activeRect.left) / activeRect.width()).coerceIn(0f, 1f)
+                val ny = ((y - activeRect.top) / activeRect.height()).coerceIn(0f, 1f)
                 dispatchPen(tipDown = false, barrel = false, inRange = false, nx, ny, 0f, toolType)
             }
             MotionEvent.ACTION_HOVER_ENTER, MotionEvent.ACTION_HOVER_MOVE -> {
+                val nx = ((x - activeRect.left) / activeRect.width()).coerceIn(0f, 1f)
+                val ny = ((y - activeRect.top) / activeRect.height()).coerceIn(0f, 1f)
                 dispatchPen(tipDown = false, barrel = barrel, inRange = true, nx, ny, 0f, toolType)
             }
             MotionEvent.ACTION_HOVER_EXIT -> {
                 cursorX = -1f
                 cursorY = -1f
+                val nx = ((x - activeRect.left) / activeRect.width()).coerceIn(0f, 1f)
+                val ny = ((y - activeRect.top) / activeRect.height()).coerceIn(0f, 1f)
                 dispatchPen(tipDown = false, barrel = false, inRange = false, nx, ny, 0f, toolType)
             }
         }
@@ -432,37 +490,85 @@ class DrawPadView @JvmOverloads constructor(
             MotionEvent.ACTION_DOWN -> {
                 mouseButtonDown = true
                 longPressTriggered = false
+                mouseClickPending = true
+                mouseDragging = false
+                mouseDownX = x
+                mouseDownY = y
+                mouseDownTime = System.currentTimeMillis()
                 lastMouseX = x
                 lastMouseY = y
 
+                // Long press → right-click (only if still within slop)
                 longPressRunnable = Runnable {
-                    longPressTriggered = true
-                    // Send right-click press
-                    onMouseEvent?.invoke(MouseEvent(leftButton = false, rightButton = true, dx = 0f, dy = 0f))
+                    if (mouseClickPending) {
+                        // Held long enough without moving → press-and-hold (left button down for drag)
+                        mouseClickPending = false
+                        mouseDragging = true
+                        onMouseEvent?.invoke(MouseEvent(leftButton = true, rightButton = false, dx = 0f, dy = 0f))
+                    } else if (mouseDragging) {
+                        // Already dragging, trigger right-click
+                        longPressTriggered = true
+                        // Release left, press right
+                        onMouseEvent?.invoke(MouseEvent(leftButton = false, rightButton = true, dx = 0f, dy = 0f))
+                    }
                 }
                 longPressHandler.postDelayed(longPressRunnable!!, LONG_PRESS_TIMEOUT)
-
-                // Send left button down
-                onMouseEvent?.invoke(MouseEvent(leftButton = true, rightButton = false, dx = 0f, dy = 0f))
+                // Do NOT send button-down yet — wait to see click vs drag
             }
             MotionEvent.ACTION_MOVE -> {
                 if (mouseButtonDown && lastMouseX >= 0 && lastMouseY >= 0) {
-                    val dx = x - lastMouseX
-                    val dy = y - lastMouseY
-                    if (dx * dx + dy * dy > LONG_PRESS_MOVE_THRESHOLD) {
-                        cancelPendingLongPress()
+                    val distFromDown = (x - mouseDownX) * (x - mouseDownX) + (y - mouseDownY) * (y - mouseDownY)
+
+                    if (mouseClickPending) {
+                        // Still deciding click vs drag
+                        if (distFromDown > MOUSE_CLICK_SLOP) {
+                            // Movement exceeded slop → this is a drag
+                            mouseClickPending = false
+                            mouseDragging = true
+                            cancelPendingLongPress()
+                            // Send button-down now, then movement from down-point
+                            onMouseEvent?.invoke(MouseEvent(leftButton = true, rightButton = false, dx = 0f, dy = 0f))
+                            val dx = x - mouseDownX
+                            val dy = y - mouseDownY
+                            onMouseEvent?.invoke(MouseEvent(leftButton = true, rightButton = false, dx = dx, dy = dy))
+                            lastMouseX = x
+                            lastMouseY = y
+                        }
+                        // Within slop: absorb movement, send nothing
+                    } else if (mouseDragging) {
+                        // Already dragging — send movement
+                        val dx = x - lastMouseX
+                        val dy = y - lastMouseY
+                        val button = !longPressTriggered
+                        onMouseEvent?.invoke(MouseEvent(leftButton = button, rightButton = longPressTriggered, dx = dx, dy = dy))
+                        lastMouseX = x
+                        lastMouseY = y
                     }
-                    val button = !longPressTriggered
-                    onMouseEvent?.invoke(MouseEvent(leftButton = button, rightButton = longPressTriggered, dx = dx, dy = dy))
-                    lastMouseX = x
-                    lastMouseY = y
                 }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 cancelPendingLongPress()
+                if (mouseClickPending) {
+                    // Never exceeded slop → clean click
+                    val elapsed = System.currentTimeMillis() - mouseDownTime
+                    if (elapsed < MOUSE_CLICK_TIMEOUT) {
+                        // Quick tap → left click (press + release)
+                        onMouseEvent?.invoke(MouseEvent(leftButton = true, rightButton = false, dx = 0f, dy = 0f))
+                        postDelayed({
+                            onMouseEvent?.invoke(MouseEvent(leftButton = false, rightButton = false, dx = 0f, dy = 0f))
+                        }, 50)
+                    } else {
+                        // Was held long (press-and-hold case handled by long press runnable, but release anyway)
+                        onMouseEvent?.invoke(MouseEvent(leftButton = false, rightButton = false, dx = 0f, dy = 0f))
+                    }
+                } else {
+                    // Was dragging — release all buttons
+                    onMouseEvent?.invoke(MouseEvent(leftButton = false, rightButton = false, dx = 0f, dy = 0f))
+                }
                 mouseButtonDown = false
-                // Release all buttons
-                onMouseEvent?.invoke(MouseEvent(leftButton = false, rightButton = false, dx = 0f, dy = 0f))
+                mouseClickPending = false
+                mouseDragging = false
+                longPressTriggered = false
                 lastMouseX = -1f
                 lastMouseY = -1f
             }
@@ -684,12 +790,25 @@ class DrawPadView @JvmOverloads constructor(
         }
         canvas.drawPath(path, strokePaint)
 
-        // Draw cursor crosshair
-        if (cursorX >= 0 && cursorY >= 0) {
-            val r = 20f + currentPressure * 30f
-            canvas.drawCircle(cursorX, cursorY, r, cursorPaint)
-            canvas.drawLine(cursorX - r - 5, cursorY, cursorX + r + 5, cursorY, cursorPaint)
-            canvas.drawLine(cursorX, cursorY - r - 5, cursorX, cursorY + r + 5, cursorPaint)
+        // Draw cursor
+        if (cursorX >= 0 && cursorY >= 0 && cursorStyle != CursorStyle.NONE) {
+            when (cursorStyle) {
+                CursorStyle.CROSSHAIR -> {
+                    val r = 20f + currentPressure * 30f
+                    canvas.drawCircle(cursorX, cursorY, r, cursorPaint)
+                    canvas.drawLine(cursorX - r - 5, cursorY, cursorX + r + 5, cursorY, cursorPaint)
+                    canvas.drawLine(cursorX, cursorY - r - 5, cursorX, cursorY + r + 5, cursorPaint)
+                }
+                CursorStyle.DOT -> {
+                    val r = 3f + currentPressure * 4f
+                    canvas.drawCircle(cursorX, cursorY, r, cursorDotPaint)
+                }
+                CursorStyle.CIRCLE -> {
+                    val r = 8f + currentPressure * 12f
+                    canvas.drawCircle(cursorX, cursorY, r, cursorCirclePaint)
+                }
+                CursorStyle.NONE -> {} // handled by outer check
+            }
         }
 
         // Draw focus selection rectangle

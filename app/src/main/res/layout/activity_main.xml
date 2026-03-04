@@ -5,81 +5,68 @@
     android:orientation="vertical"
     android:background="#1A1A2E">
 
-    <!-- Status bar -->
+    <!-- Toolbar: device selector + action buttons in one row -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:padding="12dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:padding="8dp"
         android:background="#16213E">
 
-        <TextView
-            android:id="@+id/status_text"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Initializing..."
-            android:textColor="#E0E0E0"
-            android:textSize="14sp" />
+        <!-- Device spinner (shows known devices or registering state) -->
+        <Spinner
+            android:id="@+id/device_spinner"
+            android:layout_width="0dp"
+            android:layout_height="40dp"
+            android:layout_weight="1"
+            android:background="@android:drawable/btn_dropdown"
+            android:popupBackground="#16213E" />
 
-        <TextView
-            android:id="@+id/connection_text"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Not connected"
-            android:textColor="#FF5722"
-            android:textSize="13sp"
-            android:paddingTop="4dp" />
+        <Button
+            android:id="@+id/btn_discoverable"
+            android:layout_width="wrap_content"
+            android:layout_height="40dp"
+            android:layout_marginStart="6dp"
+            android:text="Pair"
+            android:textSize="11sp"
+            style="?attr/materialButtonOutlinedStyle" />
 
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:paddingTop="8dp">
+        <Button
+            android:id="@+id/btn_screenshot"
+            android:layout_width="wrap_content"
+            android:layout_height="40dp"
+            android:layout_marginStart="6dp"
+            android:text="Screenshot"
+            android:textSize="11sp"
+            style="?attr/materialButtonOutlinedStyle" />
 
-            <Button
-                android:id="@+id/btn_discoverable"
-                android:layout_width="wrap_content"
-                android:layout_height="40dp"
-                android:text="Make Discoverable"
-                android:textSize="12sp"
-                style="?attr/materialButtonOutlinedStyle" />
+        <Button
+            android:id="@+id/btn_clear"
+            android:layout_width="wrap_content"
+            android:layout_height="40dp"
+            android:layout_marginStart="6dp"
+            android:text="Clear"
+            android:textSize="11sp"
+            style="?attr/materialButtonOutlinedStyle" />
 
-            <Button
-                android:id="@+id/btn_clear"
-                android:layout_width="wrap_content"
-                android:layout_height="40dp"
-                android:layout_marginStart="8dp"
-                android:text="Clear"
-                android:textSize="12sp"
-                style="?attr/materialButtonOutlinedStyle" />
+        <Button
+            android:id="@+id/btn_focus"
+            android:layout_width="wrap_content"
+            android:layout_height="40dp"
+            android:layout_marginStart="6dp"
+            android:text="Focus"
+            android:textSize="11sp"
+            style="?attr/materialButtonOutlinedStyle" />
 
-            <Button
-                android:id="@+id/btn_screenshot"
-                android:layout_width="wrap_content"
-                android:layout_height="40dp"
-                android:layout_marginStart="8dp"
-                android:text="Screenshot"
-                android:textSize="12sp"
-                style="?attr/materialButtonOutlinedStyle" />
-
-            <Button
-                android:id="@+id/btn_focus"
-                android:layout_width="wrap_content"
-                android:layout_height="40dp"
-                android:layout_marginStart="8dp"
-                android:text="Focus"
-                android:textSize="12sp"
-                style="?attr/materialButtonOutlinedStyle" />
-
-            <Button
-                android:id="@+id/btn_settings"
-                android:layout_width="wrap_content"
-                android:layout_height="40dp"
-                android:layout_marginStart="8dp"
-                android:text="Settings"
-                android:textSize="12sp"
-                style="?attr/materialButtonOutlinedStyle" />
-        </LinearLayout>
+        <Button
+            android:id="@+id/btn_settings"
+            android:layout_width="wrap_content"
+            android:layout_height="40dp"
+            android:layout_marginStart="6dp"
+            android:text="Settings"
+            android:textSize="11sp"
+            style="?attr/materialButtonOutlinedStyle" />
     </LinearLayout>
 
     <!-- Drawing area -->

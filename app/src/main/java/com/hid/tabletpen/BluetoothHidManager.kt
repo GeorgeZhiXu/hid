@@ -55,6 +55,36 @@ class BluetoothHidManager(private val context: Context) {
         bt.getProfileProxy(context, profileListener, BluetoothProfile.HID_DEVICE)
     }
 
+    /** Disconnect current device (if any) */
+    fun disconnect() {
+        val device = connectedDevice ?: return
+        val hid = hidDevice ?: return
+        try {
+            hid.disconnect(device)
+        } catch (e: Exception) {
+            Log.w(TAG, "disconnect failed", e)
+        }
+    }
+
+    /** Connect to a specific bonded device by address */
+    fun connectTo(address: String) {
+        val bt = adapter ?: return
+        val hid = hidDevice ?: return
+        try {
+            val device = bt.getRemoteDevice(address)
+            if (device.bondState == BluetoothDevice.BOND_BONDED) {
+                Log.i(TAG, "Connecting to ${device.name ?: address}")
+                hid.connect(device)
+            } else {
+                Log.w(TAG, "Device $address not bonded")
+                listener?.onError("Device not paired: ${device.name ?: address}")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "connectTo failed", e)
+            listener?.onError("Connection failed: ${e.message}")
+        }
+    }
+
     fun stop() {
         try {
             hidDevice?.unregisterApp()

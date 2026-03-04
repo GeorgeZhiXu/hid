@@ -10,11 +10,13 @@ import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.View
 import android.view.WindowManager
+import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Button
-import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.SeekBar
@@ -37,8 +39,7 @@ class MainActivity : AppCompatActivity(),
     private lateinit var settings: AppSettings
     private lateinit var btScreenshot: BluetoothScreenshot
 
-    private lateinit var statusText: TextView
-    private lateinit var connectionText: TextView
+    private lateinit var deviceSpinner: Spinner
     private lateinit var drawPad: DrawPadView
     private lateinit var discoverableBtn: Button
     private lateinit var clearBtn: Button
@@ -48,6 +49,23 @@ class MainActivity : AppCompatActivity(),
 
     private var hidRegistered = false
 
+    // Device selection
+    private var knownDevices = linkedMapOf<String, String>() // address → name
+    private var deviceAddresses = listOf<String>() // ordered list for spinner index mapping
+    private var suppressSpinnerEvent = false
+
+    // Animated dots for loading states
+    private val uiHandler = Handler(Looper.getMainLooper())
+    private var dotCount = 0
+    private val dotAnimRunnable = object : Runnable {
+        override fun run() {
+            dotCount = (dotCount + 1) % 4
+            updateUI()
+            uiHandler.postDelayed(this, 400)
+        }
+    }
+    private var dotAnimRunning = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -56,13 +74,11 @@ class MainActivity : AppCompatActivity(),
         setContentView(R.layout.activity_main)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
-        statusText = findViewById(R.id.status_text)
-        connectionText = findViewById(R.id.connection_text)
+        deviceSpinner = findViewById(R.id.device_spinner)
         drawPad = findViewById(R.id.draw_pad)
         discoverableBtn = findViewById(R.id.btn_discoverable)
         clearBtn = findViewById(R.id.btn_clear)
         settingsBtn = findViewById(R.id.btn_settings)
-
         screenshotBtn = findViewById(R.id.btn_screenshot)
         focusBtn = findViewById(R.id.btn_focus)
 
@@ -70,18 +86,37 @@ class MainActivity : AppCompatActivity(),
         hidManager.listener = this
         hidManager.setAutoConnectDevice(AppSettings.loadLastDevice(this))
 
+        // Device selector
+        knownDevices = AppSettings.loadKnownDevices(this)
+        refreshDeviceSpinner()
+        deviceSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, pos: Int, id: Long) {
+                if (suppressSpinnerEvent) { suppressSpinnerEvent = false; return }
+                if (pos >= deviceAddresses.size) return
+                val address = deviceAddresses[pos]
+                if (address == hidManager.connectedDeviceAddress) return
+                // Switch to selected device
+                AppSettings.saveLastDevice(this@MainActivity, address)
+                hidManager.setAutoConnectDevice(address)
+                hidManager.disconnect()
+                hidManager.connectTo(address)
+            }
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
+        deviceSpinner.setOnLongClickListener {
+            showDeviceManageDialog()
+            true
+        }
+
         btScreenshot = BluetoothScreenshot(this)
         btScreenshot.listener = object : BluetoothScreenshot.Listener {
             override fun onScreenshotReceived(bitmap: android.graphics.Bitmap) {
                 drawPad.setScreenshot(bitmap)
                 if (settings.clearOnScreenshot) drawPad.clearStrokes()
-                screenshotBtn.text = "Screenshot"
-                screenshotBtn.isEnabled = true
+                updateScreenshotBtn()
             }
             override fun onScreenshotError(message: String) {
-                statusText.text = "Screenshot: $message"
-                screenshotBtn.text = "Screenshot"
-                screenshotBtn.isEnabled = true
+                updateScreenshotBtn()
             }
         }
         btScreenshot.startServer()
@@ -110,6 +145,7 @@ class MainActivity : AppCompatActivity(),
 
     override fun onDestroy() {
         super.onDestroy()
+        stopDotAnimation()
         btScreenshot.stopServer()
         hidManager.stop()
     }
@@ -119,6 +155,7 @@ class MainActivity : AppCompatActivity(),
         drawPad.inputMode = settings.inputMode
         drawPad.scrollSensitivity = settings.scrollSensitivity
         drawPad.pinchThreshold = settings.pinchThreshold
+        drawPad.cursorStyle = settings.cursorStyle
     }
 
     // ---- Pen event → BT HID digitizer report ----
@@ -272,7 +309,15 @@ class MainActivity : AppCompatActivity(),
         }
         layout.addView(ratioSpinner)
 
-        // Pressure floor
+        // Cursor style
+        layout.addView(TextView(this).apply { text = "Cursor Style"; setPadding(0, 16, 0, 4) })
+        val cursorSpinner = Spinner(this).apply {
+            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item,
+                CursorStyle.LABELS)
+            setSelection(settings.cursorStyle.ordinal)
+        }
+        layout.addView(cursorSpinner)
+
         // Clear on screenshot
         val clearCheck = android.widget.CheckBox(this).apply {
             text = "Clear strokes on new screenshot"
@@ -407,7 +452,8 @@ class MainActivity : AppCompatActivity(),
                     mouseSensitivity = 0.5f + mouseSeek.progress / 100f * 4.5f,
                     scrollSensitivity = 0.5f + scrollSensSeek.progress / 100f * 4.5f,
                     pinchSensitivity = 5f + pinchSensSeek.progress / 100f * 55f,
-                    pinchThreshold = 0.005f + pinchThreshSeek.progress / 100f * 0.045f
+                    pinchThreshold = 0.005f + pinchThreshSeek.progress / 100f * 0.045f,
+                    cursorStyle = CursorStyle.entries[cursorSpinner.selectedItemPosition]
                 )
                 AppSettings.save(this, settings)
                 applySettingsToDrawPad()
@@ -461,29 +507,22 @@ class MainActivity : AppCompatActivity(),
     @SuppressLint("SetTextI18n")
     private fun onFocusClicked() {
         if (drawPad.focusRect != null) {
-            // Already focused — reset
             drawPad.resetFocus()
             focusBtn.text = "Focus"
-            statusText.text = "Focus cleared"
         } else if (drawPad.focusSelecting) {
-            // Cancel selection
             drawPad.focusSelecting = false
             focusBtn.text = "Focus"
         } else {
-            // Start selection
             drawPad.focusSelecting = true
             focusBtn.text = "Reset Focus"
-            statusText.text = "Draw a rectangle to select focus area"
         }
     }
 
     // ---- Screenshot ----
 
+    @SuppressLint("SetTextI18n")
     private fun onScreenshotClicked() {
-        if (!btScreenshot.isMacConnected) {
-            statusText.text = "Mac not connected. Run ./screenshot-server on Mac."
-            return
-        }
+        if (!btScreenshot.isMacConnected) return
         screenshotBtn.text = "Capturing..."
         screenshotBtn.isEnabled = false
         btScreenshot.requestScreenshot()
@@ -500,39 +539,132 @@ class MainActivity : AppCompatActivity(),
     override fun onDeviceConnected(device: BluetoothDevice) {
         AppSettings.saveLastDevice(this, device.address)
         hidManager.setAutoConnectDevice(device.address)
-        runOnUiThread { updateUI() }
+        val name = device.name ?: "Unknown"
+        AppSettings.saveKnownDevice(this, device.address, name)
+        knownDevices[device.address] = name
+        runOnUiThread {
+            refreshDeviceSpinner()
+            updateUI()
+        }
     }
 
     override fun onDeviceDisconnected() {
-        runOnUiThread { updateUI() }
+        runOnUiThread {
+            refreshDeviceSpinner()
+            updateUI()
+        }
     }
 
     override fun onError(message: String) {
-        runOnUiThread { statusText.text = "Error: $message" }
+        runOnUiThread { updateUI() }
+    }
+
+    // ---- Device management ----
+
+    @SuppressLint("MissingPermission")
+    private fun refreshDeviceSpinner() {
+        deviceAddresses = knownDevices.keys.toList()
+        val connectedAddr = hidManager.connectedDeviceAddress
+        val modeName = if (settings.inputMode == InputMode.DIGITIZER) "Pen" else "Mouse"
+
+        val labels = deviceAddresses.map { addr ->
+            val name = knownDevices[addr] ?: "Unknown"
+            if (addr == connectedAddr) "$name [$modeName]" else name
+        }.ifEmpty { listOf("No devices paired") }
+
+        suppressSpinnerEvent = true
+        deviceSpinner.adapter = ArrayAdapter(
+            this, android.R.layout.simple_spinner_dropdown_item, labels
+        )
+
+        // Select the currently connected or last-used device
+        val target = connectedAddr ?: AppSettings.loadLastDevice(this)
+        val idx = deviceAddresses.indexOf(target)
+        if (idx >= 0) {
+            deviceSpinner.setSelection(idx)
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun showDeviceManageDialog() {
+        if (knownDevices.isEmpty()) return
+        val entries = knownDevices.entries.toList()
+        val names = entries.map { "${it.value} (${it.key})" }.toTypedArray()
+
+        AlertDialog.Builder(this)
+            .setTitle("Forget a device")
+            .setItems(names) { _, which ->
+                val address = entries[which].key
+                val name = entries[which].value
+                AlertDialog.Builder(this)
+                    .setMessage("Forget \"$name\"?")
+                    .setPositiveButton("Forget") { _, _ ->
+                        AppSettings.removeKnownDevice(this, address)
+                        knownDevices.remove(address)
+                        if (AppSettings.loadLastDevice(this) == address) {
+                            val next = knownDevices.keys.firstOrNull()
+                            AppSettings.saveLastDevice(this, next)
+                            hidManager.setAutoConnectDevice(next)
+                        }
+                        refreshDeviceSpinner()
+                    }
+                    .setNegativeButton("Cancel", null)
+                    .show()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     // ---- UI ----
 
     @SuppressLint("MissingPermission", "SetTextI18n")
     private fun updateUI() {
-        val modeName = if (settings.inputMode == InputMode.DIGITIZER) "Pen" else "Mouse"
-        statusText.text = when {
-            !hidRegistered -> "Registering HID device..."
-            hidManager.isConnected -> "Connected [$modeName] — draw to send input"
-            else -> "Waiting for connection. Make tablet discoverable, then pair from Mac."
-        }
-
-        connectionText.text = if (hidManager.isConnected) {
-            "Connected to: ${hidManager.connectedDeviceName ?: "Unknown"}"
+        // Discoverable / connect button
+        if (!hidRegistered) {
+            val dots = ".".repeat(dotCount)
+            discoverableBtn.text = "Registering$dots"
+            discoverableBtn.isEnabled = false
+            discoverableBtn.visibility = View.VISIBLE
+            startDotAnimation()
+        } else if (hidManager.isConnected) {
+            discoverableBtn.visibility = View.GONE
+            stopDotAnimation()
         } else {
-            "Not connected"
+            discoverableBtn.text = "Pair"
+            discoverableBtn.isEnabled = true
+            discoverableBtn.visibility = View.VISIBLE
+            stopDotAnimation()
         }
 
-        connectionText.setTextColor(
-            if (hidManager.isConnected) 0xFF4CAF50.toInt() else 0xFFFF5722.toInt()
-        )
+        // Screenshot button — shows Mac connection state
+        updateScreenshotBtn()
+    }
 
-        discoverableBtn.visibility = if (!hidManager.isConnected) View.VISIBLE else View.GONE
+    @SuppressLint("SetTextI18n")
+    private fun updateScreenshotBtn() {
+        if (!screenshotBtn.isEnabled) return  // currently capturing
+        if (btScreenshot.isMacConnected) {
+            screenshotBtn.text = "Screenshot"
+            screenshotBtn.isEnabled = true
+        } else {
+            screenshotBtn.text = "No Mac"
+            screenshotBtn.isEnabled = false
+        }
+    }
+
+    private fun startDotAnimation() {
+        if (!dotAnimRunning) {
+            dotAnimRunning = true
+            uiHandler.postDelayed(dotAnimRunnable, 400)
+        }
+    }
+
+    private fun stopDotAnimation() {
+        if (dotAnimRunning) {
+            dotAnimRunning = false
+            uiHandler.removeCallbacks(dotAnimRunnable)
+            dotCount = 0
+        }
     }
 
     // ---- Discoverable ----
@@ -575,7 +707,9 @@ class MainActivity : AppCompatActivity(),
             if (grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
                 hidManager.start()
             } else {
-                statusText.text = "Bluetooth permissions required"
+                discoverableBtn.text = "No BT Permission"
+                discoverableBtn.isEnabled = false
+                discoverableBtn.visibility = View.VISIBLE
             }
         }
     }
