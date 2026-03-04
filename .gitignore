@@ -14,3 +14,12 @@
 *.class
 *.log
 .DS_Store
+
+# Compiled binaries (use GitHub Releases for distribution)
+mac/screenshot-server
+remarkable/bt_agent
+remarkable/patch_sdp
+remarkable/register_hid
+remarkable/register_hid_sdp
+remarkable/sdp_sniff
+sony-dpt/tabletpen-arm64

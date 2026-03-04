@@ -12,28 +12,46 @@ The app uses Android's `BluetoothHidDevice` API to register the tablet as a stan
 │  S Pen / Stylus      │   Digitizer + Mouse reports │  (macOS/Win)  │
 │  Wacom digitizer     │   X, Y, pressure,           │               │
 │                      │   tip, barrel, in-range      │  Sees a pen   │
-│  TabletPen app       │◄──── Screenshot (ADB) ──────│  tablet (HID) │
+│  TabletPen app       │◄─── Screenshot (BT RFCOMM) ─│  tablet (HID) │
 └─────────────────────┘                              └──────────────┘
 ```
 
-1. App registers as a Bluetooth HID device with digitizer + mouse descriptors
+1. App registers as a Bluetooth HID device with digitizer + mouse + keyboard descriptors
 2. Tablet becomes discoverable, you pair from your laptop's Bluetooth settings
 3. Laptop recognizes it as a native pen tablet — no drivers needed
 4. Stylus input on the tablet sends HID reports to the laptop
-5. Optionally, take screenshots of the laptop screen to use as a drawing reference
+5. Optionally, take screenshots of the laptop screen over Bluetooth (no WiFi needed)
 
 ## Features
 
 - **Digitizer mode** — absolute pen positioning with pressure sensitivity (0–4095 levels)
 - **Mouse mode** — relative cursor movement via pen hover, left click, long-press right click
-- **Palm rejection** — finger input moves mouse only (no clicks), palm is ignored, only stylus draws
-- **Pressure tuning** — configurable pressure floor and curve to work with apps like OneNote
+- **Trackpad finger gestures** — 1-finger move/click, 2-finger scroll/right-click, pinch zoom
+- **Palm rejection** — finger = trackpad, stylus = pen input, palm = ignored
+- **Pressure tuning** — configurable floor and curve to work with apps like OneNote
 - **Aspect ratio mapping** — drawing area matches laptop screen ratio (16:10, 16:9, 3:2)
 - **Auto orientation** — landscape/portrait based on target aspect ratio, with manual override
-- **Focus mode** — zoom into a region of the screenshot, remap drawing area to that region
-- **Screenshot** — capture laptop screen and display as drawing background (via ADB tunnel)
+- **Focus mode** — zoom into a screen region, remap drawing area to that region
+- **Screenshot over Bluetooth** — captures laptop screen via RFCOMM, no WiFi or USB needed
 - **Auto-connect** — remembers last paired laptop and reconnects on app launch
 - **Settings** — all preferences saved and persisted across sessions
+
+## Supported Platforms
+
+### Android Tablets (primary)
+Any Android 9+ tablet with Bluetooth and stylus:
+- Samsung Galaxy Tab S6/S7/S8/S9 (S Pen)
+- Samsung Galaxy Z Fold with S Pen
+- Boox e-ink tablets
+- Bigme e-ink tablets
+- Lenovo Tab P series with stylus
+
+### reMarkable Paper Pro (experimental)
+Linux-based e-ink tablet. Cross-compiled C binary, zero dependencies.
+Status: Bluetooth pairing and SDP working. L2CAP HID data send pending BlueZ D-Bus fix.
+
+### Sony DPT-RP1/S1 (experimental)
+Rooted Android 5.1 e-ink reader. Zero-dependency C binary using raw Linux Bluetooth.
 
 ## HID Report Format
 
@@ -55,99 +73,221 @@ The app uses Android's `BluetoothHidDevice` API to register the tablet as a stan
 | 2 | Y delta (int8) | -127 to 127 |
 | 3 | Scroll wheel (int8) | -127 to 127 |
 
-## Requirements
+**Report ID 3 — Keyboard (8 bytes):**
 
-### Android Tablet
-- Android 9+ (API 28) — required for `BluetoothHidDevice` API
-- Bluetooth
-- Stylus with pressure sensitivity (e.g., Samsung S Pen, Wacom EMR digitizer)
-- Tested on: Samsung Galaxy Tab S8 Ultra, Bigme Tab Ultra C Pro
+| Byte | Field | Description |
+|------|-------|-------------|
+| 0 | Modifiers | Bit 0: L-Ctrl, 1: L-Shift, 2: L-Alt, 3: L-GUI |
+| 1 | Reserved | 0x00 |
+| 2–7 | Key codes | Up to 6 simultaneous keys |
 
-### Laptop
-- Bluetooth
-- macOS or Windows (any version with Bluetooth HID support)
-- For screenshot feature: ADB (Android SDK platform-tools) and Python 3
+## Quick Start
 
-## Setup
+### 1. Install the Android App
 
-### Basic (pen tablet only)
+Download `app-debug.apk` from [Releases](https://github.com/GeorgeZhiXu/hid/releases) and install:
+```bash
+adb install app-debug.apk
+```
+Or transfer the APK to the tablet and open it.
 
-1. Build and install the app on your tablet:
-   ```bash
-   ./gradlew installDebug
-   ```
-2. Open TabletPen, grant Bluetooth permissions
+### 2. Pair with Laptop
+
+1. Open **TabletPen** on the tablet
+2. Grant Bluetooth permissions when prompted
 3. Tap **Make Discoverable**
-4. On your laptop: Bluetooth settings → pair with the tablet
-5. Draw — laptop cursor follows the stylus
+4. On your laptop: **System Settings → Bluetooth → pair** with the tablet
+5. Draw with the stylus — laptop cursor follows
 
 The app auto-connects to the last paired laptop on subsequent launches.
 
-### Screenshot Feature (optional)
+### 3. Screenshot Feature (Optional)
 
-The screenshot feature lets you see your laptop screen on the tablet while drawing. It uses ADB to tunnel the connection — no WiFi required, works over USB or wireless debug.
+See your laptop screen on the tablet while drawing. Works entirely over Bluetooth — no WiFi or USB cable needed.
 
 **On the Mac:**
 ```bash
-# Set up the ADB tunnel (USB or wireless debug)
-adb reverse tcp:9877 tcp:9877
+# Download from Releases or compile from source
+cd mac && ./build.sh
 
-# Start the screenshot server
-./mac/screenshot-server.sh
+# Run the screenshot server
+./screenshot-server
 ```
+The server auto-discovers the connected tablet and connects via Bluetooth RFCOMM.
 
 **On the tablet:**
-- Tap **Screenshot** to capture and display the laptop screen
+- Tap **Screenshot** to capture and display the laptop screen (~1 second)
 - Tap **Focus** to zoom into a specific area
-
-The screenshot server uses only built-in macOS tools (`screencapture` + Python 3). No installs needed.
-
-To compile the (optional, unused) Swift Bluetooth server:
-```bash
-cd mac && ./build.sh
-```
+- Tap **Reset Focus** to go back to full screen
 
 ## Settings
 
-Open via the **Settings** button:
+Tap **Settings** in the app to configure:
 
-| Setting | Description | Default |
-|---------|-------------|---------|
-| Input Mode | Digitizer (absolute pen) or Mouse (relative) | Digitizer |
-| Orientation | Auto, Portrait, or Landscape | Auto |
-| Rotation | 0°, 90°, 180°, 270° (which edge is up) | 0° |
-| Aspect Ratio | 16:10, 16:9, or 3:2 (match your laptop) | 16:10 |
-| Clear on Screenshot | Auto-clear strokes when new screenshot arrives | On |
-| Pressure Floor | Minimum pressure when pen touches (0–100%) | 80% |
-| Pressure Curve | Exponent for pressure ramp (lower = more sensitive) | 0.50 |
-| Mouse Sensitivity | Speed multiplier for mouse mode | 2.0x |
+| Setting | Default | Description |
+|---------|---------|-------------|
+| Input Mode | Digitizer | Digitizer (absolute pen) or Mouse (relative) |
+| Orientation | Auto | Auto, Portrait, or Landscape |
+| Rotation | 0° | Which edge is up (0/90/180/270) |
+| Aspect Ratio | 16:10 | Match your laptop (16:10, 16:9, 3:2) |
+| Clear on Screenshot | On | Auto-clear strokes on new screenshot |
+| Pressure Floor | 80% | Min pressure when pen touches |
+| Pressure Curve | 0.50 | Exponent (lower = more sensitive) |
+| Mouse Sensitivity | 2.0x | Cursor speed in mouse mode |
+| Scroll Sensitivity | 2.0x | Two-finger scroll speed |
+| Pinch Sensitivity | 30 | Pinch-to-zoom multiplier |
+| Pinch Threshold | 1.0% | Lower = easier to pinch vs scroll |
+
+## Finger Trackpad Gestures
+
+| Gesture | Action |
+|---------|--------|
+| 1 finger drag | Move mouse cursor |
+| 1 finger tap | Left click |
+| 2 finger tap | Right click |
+| 2 finger drag | Scroll (vertical + horizontal) |
+| 2 finger pinch | Zoom (Ctrl+scroll on laptop) |
+
+## Building from Source
+
+### Android App
+
+**Requirements:**
+- Java 17+
+- Android SDK (API 34)
+- Android Build Tools 34.0.0
+- Gradle 8.5 (wrapper included)
+- Kotlin 1.9.22
+
+```bash
+# Build
+./gradlew assembleDebug
+
+# Install directly
+./gradlew installDebug
+```
+
+**Dependencies:** AndroidX Core KTX 1.12.0, AppCompat 1.6.1, Material 1.11.0. No third-party libraries.
+
+### Mac Screenshot Server
+
+**Requirements:**
+- macOS with Xcode Command Line Tools (`xcode-select --install`)
+- Swift compiler (`swiftc`) — included with Xcode CLI tools
+- IOBluetooth framework — included with macOS
+
+```bash
+cd mac
+./build.sh    # compiles screenshot-server from screenshot-server.swift
+./screenshot-server
+```
+
+Also includes `screenshot-server.sh` — a Python-based HTTP fallback that works over ADB reverse tunnel:
+```bash
+# Requires: Python 3 (pre-installed on macOS via Homebrew/pyenv)
+adb reverse tcp:9877 tcp:9877
+./screenshot-server.sh
+```
+
+### reMarkable Paper Pro
+
+**Requirements:**
+- [Zig](https://ziglang.org/) compiler for cross-compilation (`brew install zig`)
+- SSH access to reMarkable (Developer Mode enabled)
+
+```bash
+# Cross-compile for aarch64 Linux
+cd sony-dpt
+zig cc -target aarch64-linux-musl -static -O2 -o tabletpen-arm64 tabletpen.c -lm
+
+# Deploy
+scp tabletpen-arm64 root@10.11.99.1:/home/root/tabletpen
+ssh root@10.11.99.1 chmod +x /home/root/tabletpen
+
+# Run
+ssh root@10.11.99.1
+./start-tabletpen.sh    # or: ./tabletpen --device /dev/input/event2
+```
+
+The C binary is statically linked with zero runtime dependencies (musl libc only).
+
+### Sony DPT-RP1/S1
+
+Same C source as reMarkable but cross-compiled for ARM 32-bit:
+```bash
+# Using Android NDK
+$NDK/toolchains/llvm/prebuilt/darwin-x86_64/bin/armv7a-linux-androideabi21-clang \
+  -static -o tabletpen tabletpen.c -lm
+
+# Or using Docker
+docker run --rm -v $PWD:/src arm32v7/gcc gcc -static -O2 -o /src/tabletpen /src/tabletpen.c -lm
+```
 
 ## Project Structure
 
 ```
 app/src/main/java/com/hid/tabletpen/
-├── HidDescriptor.kt        # HID report descriptors (digitizer + mouse) and report builders
+├── HidDescriptor.kt        # HID report descriptors (digitizer + mouse + keyboard)
 ├── BluetoothHidManager.kt  # BT HID device registration, auto-connect, report sending
-├── BluetoothScreenshot.kt  # Screenshot requests over HTTP (ADB tunnel)
-├── DrawPadView.kt          # Stylus/touch capture, aspect ratio boundary, focus mode
-├── AppSettings.kt          # Settings data class with SharedPreferences persistence
+├── BluetoothScreenshot.kt  # Bluetooth RFCOMM server for screenshot transfer
+├── DrawPadView.kt          # Stylus/touch capture, aspect ratio, focus, trackpad gestures
+├── AppSettings.kt          # Settings with SharedPreferences persistence
 ├── MainActivity.kt         # UI, pressure curve, orientation, settings dialog
 └── StreamReceiver.kt       # (Legacy) H.264 video stream receiver
 
 mac/
-├── screenshot-server.sh    # Screenshot server (Python HTTP + screencapture)
-├── screenshot-server.swift # (Experimental) Swift Bluetooth RFCOMM server
+├── screenshot-server.swift # Bluetooth RFCOMM screenshot client (connects to tablet)
+├── screenshot-server.sh    # HTTP fallback screenshot server (ADB tunnel)
 └── build.sh                # Compile the Swift server
+
+remarkable/
+├── start-tabletpen.sh      # Startup script (Bluetooth + SDP + agent + tabletpen)
+├── register_hid.c          # SDP HID record registration via BlueZ Unix socket
+├── register_hid_sdp.c      # Alternative SDP registration tool
+├── sdp_sniff.c             # SDP socket proxy for capturing registration bytes
+├── bt_agent.c              # Auto-accept Bluetooth pairing agent
+├── patch_sdp.c             # SDP record attribute patcher
+├── auto_pair.sh            # Shell-based auto-accept pairing
+└── tabletpen.py            # Python implementation (alternative, needs Python 3)
+
+sony-dpt/
+├── tabletpen.c             # C implementation (shared with reMarkable)
+├── tabletpen.py            # Python implementation (alternative)
+├── build.sh                # Cross-compilation script
+├── setup.sh                # Deployment script
+└── README.md               # Sony DPT-specific documentation
 ```
 
 ## Technology
 
-- **Kotlin** — Android app
-- **Android BluetoothHidDevice API** (API 28+) — registers as Bluetooth HID peripheral
-- **USB HID Descriptor** — standard digitizer pen + mouse composite device
-- **ADB reverse tunnel** — routes HTTP over USB/wireless debug for screenshots
-- **Python 3 + screencapture** — macOS screenshot server (zero dependencies)
-- **Swift + IOBluetooth** — experimental Bluetooth RFCOMM (macOS interop issues)
+| Component | Technology | Purpose |
+|-----------|-----------|---------|
+| Android app | Kotlin, Android SDK | Main tablet app |
+| BT HID | `BluetoothHidDevice` API (Android 9+) | Register as HID peripheral |
+| HID Descriptor | USB HID standard | Digitizer + mouse + keyboard composite |
+| Screenshot transport | Bluetooth RFCOMM | Wireless screenshot transfer |
+| Screenshot capture | `screencapture` + `sips` (macOS) | Screen capture + JPEG compression |
+| Mac server | Swift + IOBluetooth | RFCOMM client, connects to tablet |
+| reMarkable | C + Linux evdev + BlueZ L2CAP | Pen input + Bluetooth HID |
+| Cross-compilation | Zig (`aarch64-linux-musl`) | Static binary for reMarkable |
+| Build system | Gradle 8.5 + AGP 8.3.0 | Android build |
+
+## System Requirements
+
+| Platform | Requirements |
+|----------|-------------|
+| **Android tablet** | Android 9+ (API 28), Bluetooth, stylus |
+| **Laptop** | macOS or Windows, Bluetooth |
+| **Screenshot (Mac)** | Xcode CLI tools (for `swiftc`), or Python 3 for HTTP fallback |
+| **reMarkable** | Developer Mode, SSH via USB, Zig compiler on build machine |
+| **Sony DPT** | Root access, ADB or SSH, Android NDK or Docker for compilation |
+
+## Known Issues
+
+- reMarkable Paper Pro: macOS resets L2CAP connection on HID report send. Needs BlueZ D-Bus Profile1 API instead of raw sockets.
+- Screenshot on first connect may take 5-10 seconds (Bluetooth RFCOMM negotiation). Subsequent screenshots take ~1 second.
+- Some macOS apps (OneNote) require high pressure floor (80%+) to register pen input.
+- After changing the HID descriptor (app update), you must unpair and re-pair the tablet.
 
 ## License
 
