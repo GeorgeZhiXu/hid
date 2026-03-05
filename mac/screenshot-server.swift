@@ -9,27 +9,69 @@ class ScreenshotServer: NSObject, IOBluetoothRFCOMMChannelDelegate {
     var channel: IOBluetoothRFCOMMChannel?
     var tablet: IOBluetoothDevice?
 
+    var targetName: String?
+
     func start() {
-        // Find the paired tablet that's connected
         guard let devices = IOBluetoothDevice.pairedDevices() as? [IOBluetoothDevice] else {
             print("No paired devices"); exit(1)
         }
 
-        print("Looking for connected tablet...")
+        print("Searching for TabletPen RFCOMM service...")
         for d in devices {
-            print("  \(d.name ?? "?") connected=\(d.isConnected())")
+            print("  \(d.name ?? "?")")
         }
 
-        guard let dev = devices.first(where: { $0.isConnected() }) else {
-            print("No connected device. Make sure tablet is connected via HID first.")
-            print("Retrying in 5s...")
+        // If user specified a device name, filter to that
+        let candidates: [IOBluetoothDevice]
+        if let name = targetName {
+            candidates = devices.filter { ($0.name ?? "").localizedCaseInsensitiveContains(name) }
+            if candidates.isEmpty {
+                print("No device matching '\(name)'. Retrying in 5s...")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 5) { self.start() }
+                return
+            }
+        } else {
+            candidates = devices
+        }
+
+        // Try SDP query on each candidate to find TabletPen service
+        tryDevices(candidates, index: 0)
+    }
+
+    private func tryDevices(_ devices: [IOBluetoothDevice], index: Int) {
+        if index >= devices.count {
+            print("TabletPen service not found on any device. Retrying in 5s...")
             DispatchQueue.main.asyncAfter(deadline: .now() + 5) { self.start() }
             return
         }
 
-        tablet = dev
-        print("Found: \(dev.name ?? "?"), querying SDP...")
-        connectToTablet(dev)
+        let dev = devices[index]
+        let name = dev.name ?? "?"
+        print("Trying \(name)...")
+
+        // SDP query — will fail quickly for unreachable devices
+        DispatchQueue.global().async {
+            let result = dev.performSDPQuery(nil)
+            DispatchQueue.main.async {
+                if result == kIOReturnSuccess, let services = dev.services as? [IOBluetoothSDPServiceRecord] {
+                    // Check if this device has the TabletPen Screenshot service
+                    for svc in services {
+                        var ch: BluetoothRFCOMMChannelID = 0
+                        let svcName = svc.getAttributeDataElement(0x0100)?.getStringValue() ?? ""
+                        if svc.getRFCOMMChannelID(&ch) == kIOReturnSuccess {
+                            if svcName.contains("TabletPen") || svcName.contains("Screenshot") {
+                                print("Found TabletPen on \(name) ch=\(ch)!")
+                                self.tablet = dev
+                                self.openChannel(dev, channel: ch)
+                                return
+                            }
+                        }
+                    }
+                }
+                // Not found on this device, try next
+                self.tryDevices(devices, index: index + 1)
+            }
+        }
     }
 
     func connectToTablet(_ device: IOBluetoothDevice) {
@@ -180,6 +222,10 @@ class ScreenshotServer: NSObject, IOBluetoothRFCOMMChannelDelegate {
 }
 
 let server = ScreenshotServer()
+if CommandLine.arguments.count > 1 {
+    server.targetName = CommandLine.arguments[1]
+    print("Filtering to devices matching: \(server.targetName!)")
+}
 server.start()
 signal(SIGINT) { _ in exit(0) }
 RunLoop.main.run()
