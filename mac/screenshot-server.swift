@@ -277,7 +277,6 @@ class ScreenshotServer: NSObject, IOBluetoothRFCOMMChannelDelegate {
                         if svc.getRFCOMMChannelID(&ch) == kIOReturnSuccess {
                             if svcName.contains("TabletPen") || svcName.contains("Screenshot") {
                                 print("Found TabletPen on \(name) ch=\(ch), connecting...")
-                                self.tablet = dev
                                 self.openChannel(dev, channel: ch)
                                 return
                             }
@@ -356,13 +355,12 @@ class ScreenshotServer: NSObject, IOBluetoothRFCOMMChannelDelegate {
     func rfcommChannelOpenComplete(_ ch: IOBluetoothRFCOMMChannel!, status err: IOReturn) {
         if err == kIOReturnSuccess {
             channel = ch
-            print("BT connected on ch=\(ch.getID())")
+            tablet = ch.getDevice()  // only set tablet on successful connection
+            print("BT connected to \(tablet?.name ?? "?") on ch=\(ch.getID())")
             sendWifiInfo(channel: ch)
         } else {
-            print("Connection failed: \(err)")
-            if let t = tablet {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { self.connectToTablet(t) }
-            }
+            // Don't retry here — openChannel failure handler manages the scan
+            print("BT delegate: connection failed (\(err))")
         }
     }
 
@@ -378,10 +376,11 @@ class ScreenshotServer: NSObject, IOBluetoothRFCOMMChannelDelegate {
     }
 
     func rfcommChannelClosed(_ ch: IOBluetoothRFCOMMChannel!) {
-        print("BT disconnected")
+        print("BT disconnected from \(tablet?.name ?? "?")")
         channel = nil
-        if let t = tablet {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { self.connectToTablet(t) }
+        tablet = nil
+        // Full scan on reconnect — the device may have changed
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { self.start()
         }
     }
 
