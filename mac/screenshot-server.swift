@@ -222,129 +222,143 @@ class ScreenshotServer: NSObject, IOBluetoothRFCOMMChannelDelegate {
     var tablet: IOBluetoothDevice?
     var targetName: String?
 
+    // Saved last device for fast reconnect
+    private var lastDeviceAddress: String? {
+        get { UserDefaults.standard.string(forKey: "lastDevice") }
+        set { UserDefaults.standard.set(newValue, forKey: "lastDevice") }
+    }
+    private var lastDeviceChannel: BluetoothRFCOMMChannelID {
+        get { BluetoothRFCOMMChannelID(UserDefaults.standard.integer(forKey: "lastChannel")) }
+        set { UserDefaults.standard.set(Int(newValue), forKey: "lastChannel") }
+    }
+
     func start() {
-        // Skip scan if already connected (handles async connection success during scan)
         if channel != nil {
             print("Already connected — skipping scan")
             return
         }
 
+        // 1. Try last known device first (instant, no scanning)
+        if let addr = lastDeviceAddress, lastDeviceChannel > 0 {
+            let bt = IOBluetoothDevice(addressString: addr)
+            if let bt = bt {
+                print("Trying last device: \(bt.name ?? addr) ch=\(lastDeviceChannel)")
+                attemptConnect(bt, channel: lastDeviceChannel, fallback: { self.scanForTabletPen() })
+                return
+            }
+        }
+
+        // 2. Fall back to full scan
+        scanForTabletPen()
+    }
+
+    /// Scan paired devices for TabletPen RFCOMM service
+    private func scanForTabletPen() {
+        if channel != nil { return }
+
         guard let devices = IOBluetoothDevice.pairedDevices() as? [IOBluetoothDevice] else {
             print("No paired devices"); exit(1)
         }
 
-        print("Searching for TabletPen RFCOMM service...")
-        for d in devices {
-            print("  \(d.name ?? "?")")
-        }
-
+        // Filter: only try devices matching name filter, or all if no filter
         let candidates: [IOBluetoothDevice]
         if let name = targetName {
             candidates = devices.filter { ($0.name ?? "").localizedCaseInsensitiveContains(name) }
-            if candidates.isEmpty {
-                print("No device matching '\(name)'. Retrying in 5s...")
-                DispatchQueue.main.asyncAfter(deadline: .now() + 5) { self.start() }
-                return
-            }
         } else {
             candidates = devices
         }
 
-        tryDevices(candidates, index: 0)
-    }
-
-    private var scanDevices: [IOBluetoothDevice] = []
-    private var scanIndex: Int = 0
-
-    private func tryDevices(_ devices: [IOBluetoothDevice], index: Int) {
-        scanDevices = devices
-        scanIndex = index
-        tryNextDevice()
-    }
-
-    private func tryNextDevice() {
-        if channel != nil { return } // connected while scanning
-
-        if scanIndex >= scanDevices.count {
-            print("No device connected yet. Retrying in 5s...")
+        if candidates.isEmpty {
+            print("No candidates found. Retrying in 5s...")
             DispatchQueue.main.asyncAfter(deadline: .now() + 5) { self.start() }
             return
         }
 
-        let dev = scanDevices[scanIndex]
-        let name = dev.name ?? "?"
-        print("Trying \(name)...")
+        // Find devices with TabletPen SDP service
+        print("Scanning \(candidates.count) devices for TabletPen service...")
+        findTabletPenDevices(candidates, index: 0, found: [])
+    }
 
+    /// SDP scan to collect all devices with TabletPen service, then try connecting
+    private func findTabletPenDevices(_ devices: [IOBluetoothDevice], index: Int,
+                                       found: [(IOBluetoothDevice, BluetoothRFCOMMChannelID)]) {
+        if channel != nil { return }
+
+        if index >= devices.count {
+            if found.isEmpty {
+                print("No TabletPen devices found. Retrying in 5s...")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 5) { self.start() }
+            } else {
+                // Try connecting to each TabletPen device
+                print("Found TabletPen on \(found.count) device(s)")
+                tryConnectList(found, index: 0)
+            }
+            return
+        }
+
+        let dev = devices[index]
         DispatchQueue.global().async {
             let result = dev.performSDPQuery(nil)
             DispatchQueue.main.async {
+                if self.channel != nil { return }
+                var newFound = found
                 if result == kIOReturnSuccess, let services = dev.services as? [IOBluetoothSDPServiceRecord] {
                     for svc in services {
                         var ch: BluetoothRFCOMMChannelID = 0
                         let svcName = svc.getAttributeDataElement(0x0100)?.getStringValue() ?? ""
                         if svc.getRFCOMMChannelID(&ch) == kIOReturnSuccess {
                             if svcName.contains("TabletPen") || svcName.contains("Screenshot") {
-                                print("Found TabletPen on \(name) ch=\(ch), connecting...")
-                                self.openChannel(dev, channel: ch)
-                                return
+                                print("  \(dev.name ?? "?"): TabletPen on ch=\(ch)")
+                                newFound.append((dev, ch))
+                                break
                             }
                         }
                     }
                 }
-                self.scanIndex += 1
-                self.tryNextDevice()
+                self.findTabletPenDevices(devices, index: index + 1, found: newFound)
             }
         }
     }
 
-    func connectToTablet(_ device: IOBluetoothDevice) {
-        let result = device.performSDPQuery(nil)
-        if result != kIOReturnSuccess {
-            print("SDP query failed, retrying...")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { self.connectToTablet(device) }
+    /// Try connecting to each TabletPen device, with patience for async callbacks
+    private func tryConnectList(_ devices: [(IOBluetoothDevice, BluetoothRFCOMMChannelID)], index: Int) {
+        if channel != nil { return }
+        if index >= devices.count {
+            print("All connection attempts failed. Retrying in 5s...")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { self.start() }
             return
         }
 
-        guard let services = device.services as? [IOBluetoothSDPServiceRecord] else {
-            print("No SDP services, retrying...")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { self.connectToTablet(device) }
-            return
+        let (dev, ch) = devices[index]
+        print("Connecting to \(dev.name ?? "?") ch=\(ch)...")
+        attemptConnect(dev, channel: ch) {
+            self.tryConnectList(devices, index: index + 1)
         }
-
-        for svc in services {
-            var ch: BluetoothRFCOMMChannelID = 0
-            let name = svc.getAttributeDataElement(0x0100)?.getStringValue() ?? ""
-            if svc.getRFCOMMChannelID(&ch) == kIOReturnSuccess {
-                if name.contains("TabletPen") || name.contains("Screenshot") {
-                    print("Found TabletPen service on ch=\(ch)!")
-                    openChannel(device, channel: ch)
-                    return
-                }
-            }
-        }
-
-        print("Service not found, retrying in 5s...")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { self.connectToTablet(device) }
     }
 
-    func openChannel(_ device: IOBluetoothDevice, channel ch: BluetoothRFCOMMChannelID) {
+    /// Try RFCOMM connection. Sync call often fails but async delegate may succeed.
+    /// Wait up to 15s for async callback before calling fallback.
+    private func attemptConnect(_ device: IOBluetoothDevice, channel ch: BluetoothRFCOMMChannelID,
+                                 fallback: @escaping () -> Void) {
         DispatchQueue.global().async {
             var rfcomm: IOBluetoothRFCOMMChannel?
             let result = device.openRFCOMMChannelSync(&rfcomm, withChannelID: ch, delegate: self)
             if result == kIOReturnSuccess, let rfcomm = rfcomm {
                 self.channel = rfcomm
-                // WiFi info sent from rfcommChannelOpenComplete delegate
             } else {
-                print("Failed to open ch=\(ch) on \(device.name ?? "?"): \(result) — trying next device")
-                DispatchQueue.main.async {
-                    self.scanIndex += 1
-                    self.tryNextDevice()
+                print("  Sync open failed (\(result)) — waiting for async callback...")
+                // Wait up to 15s for async delegate to fire
+                DispatchQueue.main.asyncAfter(deadline: .now() + 15) {
+                    if self.channel == nil {
+                        print("  No async connection after 15s")
+                        fallback()
+                    }
                 }
             }
         }
     }
 
-    /// Send WiFi server info over RFCOMM so tablet can connect directly
+    /// Send WiFi server info over RFCOMM
     private func sendWifiInfo(channel: IOBluetoothRFCOMMChannel) {
         guard let ip = getLocalIP() else {
             print("Could not determine local IP — WiFi transfer unavailable")
@@ -363,11 +377,15 @@ class ScreenshotServer: NSObject, IOBluetoothRFCOMMChannelDelegate {
     func rfcommChannelOpenComplete(_ ch: IOBluetoothRFCOMMChannel!, status err: IOReturn) {
         if err == kIOReturnSuccess {
             channel = ch
-            tablet = ch.getDevice()  // only set tablet on successful connection
+            tablet = ch.getDevice()
+            // Save for fast reconnect next time
+            if let addr = tablet?.addressString {
+                lastDeviceAddress = addr
+                lastDeviceChannel = ch.getID()
+            }
             print("BT connected to \(tablet?.name ?? "?") on ch=\(ch.getID())")
             sendWifiInfo(channel: ch)
         } else {
-            // Don't retry here — openChannel failure handler manages the scan
             print("BT delegate: connection failed (\(err))")
         }
     }
@@ -387,7 +405,6 @@ class ScreenshotServer: NSObject, IOBluetoothRFCOMMChannelDelegate {
         print("BT disconnected from \(tablet?.name ?? "?")")
         channel = nil
         tablet = nil
-        // Full scan on reconnect — the device may have changed
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { self.start()
         }
     }
