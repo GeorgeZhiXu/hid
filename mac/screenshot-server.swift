@@ -247,14 +247,23 @@ class ScreenshotServer: NSObject, IOBluetoothRFCOMMChannelDelegate {
         tryDevices(candidates, index: 0)
     }
 
+    private var scanDevices: [IOBluetoothDevice] = []
+    private var scanIndex: Int = 0
+
     private func tryDevices(_ devices: [IOBluetoothDevice], index: Int) {
-        if index >= devices.count {
+        scanDevices = devices
+        scanIndex = index
+        tryNextDevice()
+    }
+
+    private func tryNextDevice() {
+        if scanIndex >= scanDevices.count {
             print("TabletPen service not found on any device. Retrying in 5s...")
             DispatchQueue.main.asyncAfter(deadline: .now() + 5) { self.start() }
             return
         }
 
-        let dev = devices[index]
+        let dev = scanDevices[scanIndex]
         let name = dev.name ?? "?"
         print("Trying \(name)...")
 
@@ -267,7 +276,7 @@ class ScreenshotServer: NSObject, IOBluetoothRFCOMMChannelDelegate {
                         let svcName = svc.getAttributeDataElement(0x0100)?.getStringValue() ?? ""
                         if svc.getRFCOMMChannelID(&ch) == kIOReturnSuccess {
                             if svcName.contains("TabletPen") || svcName.contains("Screenshot") {
-                                print("Found TabletPen on \(name) ch=\(ch)!")
+                                print("Found TabletPen on \(name) ch=\(ch), connecting...")
                                 self.tablet = dev
                                 self.openChannel(dev, channel: ch)
                                 return
@@ -275,7 +284,8 @@ class ScreenshotServer: NSObject, IOBluetoothRFCOMMChannelDelegate {
                         }
                     }
                 }
-                self.tryDevices(devices, index: index + 1)
+                self.scanIndex += 1
+                self.tryNextDevice()
             }
         }
     }
@@ -318,10 +328,10 @@ class ScreenshotServer: NSObject, IOBluetoothRFCOMMChannelDelegate {
                 self.channel = rfcomm
                 // WiFi info sent from rfcommChannelOpenComplete delegate
             } else {
-                print("Failed to open ch=\(ch): \(result)")
-                // Try next device or retry
-                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-                    self.start() // restart full scan instead of retrying same device
+                print("Failed to open ch=\(ch) on \(device.name ?? "?"): \(result) — trying next device")
+                DispatchQueue.main.async {
+                    self.scanIndex += 1
+                    self.tryNextDevice()
                 }
             }
         }
