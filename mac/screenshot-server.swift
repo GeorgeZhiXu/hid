@@ -316,12 +316,12 @@ class ScreenshotServer: NSObject, IOBluetoothRFCOMMChannelDelegate {
             let result = device.openRFCOMMChannelSync(&rfcomm, withChannelID: ch, delegate: self)
             if result == kIOReturnSuccess, let rfcomm = rfcomm {
                 self.channel = rfcomm
-                print("BT connected on ch=\(ch)")
-                self.sendWifiInfo(channel: rfcomm)
+                // WiFi info sent from rfcommChannelOpenComplete delegate
             } else {
                 print("Failed to open ch=\(ch): \(result)")
+                // Try next device or retry
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-                    self.connectToTablet(device)
+                    self.start() // restart full scan instead of retrying same device
                 }
             }
         }

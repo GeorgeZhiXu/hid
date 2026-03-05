@@ -123,35 +123,40 @@ class BluetoothScreenshot(private val context: Context) {
     // MARK: - WiFi Discovery & Connection
 
     private fun readWifiInfo(btSocket: BluetoothSocket) {
-        try {
-            val input = btSocket.inputStream
-            // Read line byte-by-byte to avoid buffering binary data
-            val sb = StringBuilder()
-            val deadline = System.currentTimeMillis() + 3000 // 3s timeout
-            while (System.currentTimeMillis() < deadline) {
-                if (input.available() > 0) {
+        // Read WiFi info on a timeout thread (blocking read — available() is unreliable on BT)
+        val readerThread = Thread({
+            try {
+                val input = btSocket.inputStream
+                val sb = StringBuilder()
+                // Blocking byte-by-byte read until newline (avoids buffering binary data)
+                while (true) {
                     val b = input.read()
                     if (b == -1 || b == '\n'.code) break
                     sb.append(b.toChar())
-                } else {
-                    Thread.sleep(50)
                 }
-            }
-
-            val line = sb.toString().trim()
-            Log.i(TAG, "Mac sent: '$line'")
-            if (line.startsWith("wifi:")) {
-                val parts = line.removePrefix("wifi:").split(":")
-                if (parts.size == 2) {
-                    wifiHost = parts[0]
-                    wifiPort = parts[1].toIntOrNull() ?: 0
-                    if (wifiPort > 0) {
-                        connectWifi()
+                val line = sb.toString().trim()
+                Log.i(TAG, "Mac sent: '$line'")
+                if (line.startsWith("wifi:")) {
+                    val parts = line.removePrefix("wifi:").split(":")
+                    if (parts.size == 2) {
+                        wifiHost = parts[0]
+                        wifiPort = parts[1].toIntOrNull() ?: 0
+                        if (wifiPort > 0) {
+                            Log.i(TAG, "WiFi info received: $wifiHost:$wifiPort")
+                            connectWifi()
+                        }
                     }
                 }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to read WiFi info: ${e.message}")
             }
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to read WiFi info: ${e.message}")
+        }, "BT-WifiInfo")
+        readerThread.start()
+        // Wait up to 5 seconds for Mac to send WiFi info
+        readerThread.join(5000)
+        if (readerThread.isAlive) {
+            Log.w(TAG, "WiFi info read timed out — Mac may not have sent it yet")
+            // Thread will continue in background; if data arrives later it'll still connect
         }
     }
 
