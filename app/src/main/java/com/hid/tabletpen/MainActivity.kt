@@ -45,6 +45,7 @@ class MainActivity : AppCompatActivity(),
     private lateinit var clearBtn: Button
     private lateinit var settingsBtn: Button
     private lateinit var screenshotBtn: Button
+    private lateinit var streamBtn: Button
     private lateinit var focusBtn: Button
 
     private var hidRegistered = false
@@ -80,6 +81,7 @@ class MainActivity : AppCompatActivity(),
         clearBtn = findViewById(R.id.btn_clear)
         settingsBtn = findViewById(R.id.btn_settings)
         screenshotBtn = findViewById(R.id.btn_screenshot)
+        streamBtn = findViewById(R.id.btn_stream)
         focusBtn = findViewById(R.id.btn_focus)
 
         hidManager = BluetoothHidManager(this)
@@ -121,6 +123,16 @@ class MainActivity : AppCompatActivity(),
                 screenshotBtn.text = "Screenshot"
                 screenshotBtn.isEnabled = true
             }
+            @SuppressLint("SetTextI18n")
+            override fun onWifiStateChanged(connected: Boolean) {
+                streamBtn.visibility = if (connected) View.VISIBLE else View.GONE
+                if (!connected && btScreenshot.isStreaming) {
+                    streamBtn.text = "Stream"
+                }
+            }
+            override fun onStreamFrame(bitmap: android.graphics.Bitmap) {
+                drawPad.setScreenshot(bitmap)
+            }
         }
         btScreenshot.startServer()
 
@@ -133,6 +145,7 @@ class MainActivity : AppCompatActivity(),
         discoverableBtn.setOnClickListener { requestDiscoverable() }
         clearBtn.setOnClickListener { drawPad.clearStrokes() }
         screenshotBtn.setOnClickListener { onScreenshotClicked() }
+        streamBtn.setOnClickListener { onStreamClicked() }
         focusBtn.setOnClickListener { onFocusClicked() }
         settingsBtn.setOnClickListener { showSettingsDialog() }
 
@@ -537,6 +550,17 @@ class MainActivity : AppCompatActivity(),
         screenshotBtn.text = "Capturing..."
         screenshotBtn.isEnabled = false
         btScreenshot.requestScreenshot()
+    }
+
+    @SuppressLint("SetTextI18n")
+    private fun onStreamClicked() {
+        if (btScreenshot.isStreaming) {
+            btScreenshot.stopStream()
+            streamBtn.text = "Stream"
+        } else {
+            btScreenshot.startStream()
+            streamBtn.text = "Stop"
+        }
     }
 
     // ---- Bluetooth HID listener ----
