@@ -223,6 +223,12 @@ class ScreenshotServer: NSObject, IOBluetoothRFCOMMChannelDelegate {
     var targetName: String?
 
     func start() {
+        // Skip scan if already connected (handles async connection success during scan)
+        if channel != nil {
+            print("Already connected — skipping scan")
+            return
+        }
+
         guard let devices = IOBluetoothDevice.pairedDevices() as? [IOBluetoothDevice] else {
             print("No paired devices"); exit(1)
         }
@@ -257,8 +263,10 @@ class ScreenshotServer: NSObject, IOBluetoothRFCOMMChannelDelegate {
     }
 
     private func tryNextDevice() {
+        if channel != nil { return } // connected while scanning
+
         if scanIndex >= scanDevices.count {
-            print("TabletPen service not found on any device. Retrying in 5s...")
+            print("No device connected yet. Retrying in 5s...")
             DispatchQueue.main.asyncAfter(deadline: .now() + 5) { self.start() }
             return
         }
