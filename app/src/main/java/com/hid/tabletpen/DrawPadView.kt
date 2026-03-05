@@ -50,16 +50,19 @@ class DrawPadView @JvmOverloads constructor(
     var inputMode: InputMode = InputMode.DIGITIZER
     var cursorStyle: CursorStyle = CursorStyle.CROSSHAIR
 
+    private var settingFocusRatio = false
+
     var targetAspectRatio: Float = 16f / 10f
         set(value) {
             val fr = focusRect
-            if (fr != null) {
-                // Focus active: update base ratio and recompute focus-derived ratio
+            if (fr != null && !settingFocusRatio) {
+                // External change (settings/orientation) while focus active:
+                // update base ratio and recompute focus-derived ratio
                 originalAspectRatio = value
                 field = (fr.width() * value) / fr.height()
             } else {
                 field = value
-                originalAspectRatio = value
+                if (fr == null) originalAspectRatio = value
             }
             recomputeActiveArea()
             invalidate()
@@ -129,14 +132,13 @@ class DrawPadView @JvmOverloads constructor(
         // Use the selection as-is — its aspect ratio becomes the new drawing area ratio
         focusRect = RectF(nx1, ny1, nx2, ny2)
 
-        // Save original and update drawing area aspect ratio to match selection
+        // Compute focus-derived aspect ratio and set directly (skip recompute in setter)
         if (originalAspectRatio == targetAspectRatio) {
             originalAspectRatio = targetAspectRatio
         }
-        // The selection's aspect ratio in screen space:
-        // selection covers fw of screen width and fh of screen height
-        // screen aspect ratio is targetAspectRatio (w/h), so actual selection ratio is:
+        settingFocusRatio = true
         targetAspectRatio = (fw * originalAspectRatio) / fh
+        settingFocusRatio = false
 
         android.util.Log.i("Focus", "focusRect=$focusRect ratio=$targetAspectRatio")
 
