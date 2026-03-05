@@ -11,8 +11,8 @@ android {
         applicationId = "com.hid.tabletpen"
         minSdk = 28
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 4
+        versionName = "0.4.0"
     }
 
     buildTypes {

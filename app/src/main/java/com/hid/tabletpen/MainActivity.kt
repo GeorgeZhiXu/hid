@@ -139,6 +139,11 @@ class MainActivity : AppCompatActivity(),
         updateUI()
         applyOrientation()
 
+        // Check for app updates
+        UpdateChecker(this).checkInBackground { info ->
+            UpdateChecker(this).showUpdateDialog(info)
+        }
+
         if (checkPermissions()) {
             hidManager.start()
         } else {
