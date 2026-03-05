@@ -55,18 +55,16 @@ class BluetoothHidManager(private val context: Context) {
         bt.getProfileProxy(context, profileListener, BluetoothProfile.HID_DEVICE)
     }
 
-    /** Force re-registration — call when waking from sleep */
+    /** Attempt reconnection if not connected — safe to call anytime */
     fun ensureConnected() {
         if (connectedDevice != null) return // already connected
-        val hid = hidDevice
-        if (hid != null) {
-            // Profile proxy alive but not connected — try re-register + auto-connect
-            Log.i(TAG, "Re-registering HID app...")
-            try { hid.unregisterApp() } catch (_: Exception) {}
-            registerApp()
+        if (hidDevice != null) {
+            // Profile proxy alive — just try to reconnect
+            Log.i(TAG, "Trying auto-connect...")
+            tryAutoConnect()
         } else {
-            // Profile proxy lost — full restart
-            Log.i(TAG, "Restarting HID profile...")
+            // Profile proxy lost (e.g., after deep sleep) — re-acquire
+            Log.i(TAG, "Re-acquiring HID profile proxy...")
             start()
         }
     }
@@ -205,7 +203,7 @@ class BluetoothHidManager(private val context: Context) {
                     listener?.onDeviceDisconnected()
                     // Auto-reconnect after a short delay
                     executor.execute {
-                        try { Thread.sleep(2000) } catch (_: Exception) {}
+                        try { Thread.sleep(500) } catch (_: Exception) {}
                         Log.i(TAG, "Attempting auto-reconnect after disconnect...")
                         tryAutoConnect()
                     }
