@@ -114,10 +114,12 @@ class MainActivity : AppCompatActivity(),
             override fun onScreenshotReceived(bitmap: android.graphics.Bitmap) {
                 drawPad.setScreenshot(bitmap)
                 if (settings.clearOnScreenshot) drawPad.clearStrokes()
-                updateScreenshotBtn()
+                screenshotBtn.text = "Screenshot"
+                screenshotBtn.isEnabled = true
             }
             override fun onScreenshotError(message: String) {
-                updateScreenshotBtn()
+                screenshotBtn.text = "Screenshot"
+                screenshotBtn.isEnabled = true
             }
         }
         btScreenshot.startServer()
