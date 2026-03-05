@@ -52,8 +52,15 @@ class DrawPadView @JvmOverloads constructor(
 
     var targetAspectRatio: Float = 16f / 10f
         set(value) {
-            field = value
-            if (focusRect == null) originalAspectRatio = value
+            val fr = focusRect
+            if (fr != null) {
+                // Focus active: update base ratio and recompute focus-derived ratio
+                originalAspectRatio = value
+                field = (fr.width() * value) / fr.height()
+            } else {
+                field = value
+                originalAspectRatio = value
+            }
             recomputeActiveArea()
             invalidate()
         }
