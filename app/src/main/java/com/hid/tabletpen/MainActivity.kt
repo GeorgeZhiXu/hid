@@ -164,6 +164,15 @@ class MainActivity : AppCompatActivity(),
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        // Reconnect HID if lost during sleep
+        if (checkPermissions()) {
+            hidManager.ensureConnected()
+        }
+        updateUI()
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         stopDotAnimation()
