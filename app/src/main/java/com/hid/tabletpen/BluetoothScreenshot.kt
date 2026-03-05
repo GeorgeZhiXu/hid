@@ -123,24 +123,34 @@ class BluetoothScreenshot(private val context: Context) {
 
     private fun doRequest(socket: BluetoothSocket) {
         synchronized(socket) {
-            Log.i(TAG, "Sending screenshot command...")
+            val t0 = System.currentTimeMillis()
+
             socket.outputStream.write("screenshot\n".toByteArray())
             socket.outputStream.flush()
 
             val input = socket.inputStream
             val sizeBytes = readExact(input, 4)
             val size = ByteBuffer.wrap(sizeBytes).int
-            Log.i(TAG, "Receiving $size bytes...")
+            val t1 = System.currentTimeMillis()
 
             if (size <= 0 || size > 20 * 1024 * 1024) {
                 throw Exception("Invalid size: $size")
             }
 
             val jpegData = readExact(input, size)
+            val t2 = System.currentTimeMillis()
+
             val bitmap = BitmapFactory.decodeByteArray(jpegData, 0, jpegData.size)
                 ?: throw Exception("Failed to decode JPEG")
+            val t3 = System.currentTimeMillis()
 
-            Log.i(TAG, "Screenshot: ${bitmap.width}x${bitmap.height}")
+            val waitMs = t1 - t0
+            val recvMs = t2 - t1
+            val decodeMs = t3 - t2
+            val totalMs = t3 - t0
+            val kb = size / 1024
+            Log.i(TAG, "${bitmap.width}x${bitmap.height} ${kb}KB — wait:${waitMs}ms recv:${recvMs}ms decode:${decodeMs}ms total:${totalMs}ms")
+
             mainHandler.post { listener?.onScreenshotReceived(bitmap) }
         }
     }

@@ -1,7 +1,12 @@
 import Foundation
 import IOBluetooth
+import ImageIO
 
 setbuf(stdout, nil)
+
+// Screenshot quality settings
+var maxDimension = 1280  // max width or height in pixels
+var jpegQuality = 35     // 1-100, lower = smaller + faster
 
 let kServiceUUID = "A5D3E9F0-7B1C-4C2E-9F3A-B8C1D2E4F6A7"
 
@@ -180,52 +185,90 @@ class ScreenshotServer: NSObject, IOBluetoothRFCOMMChannelDelegate {
     }
 
     private func sendScreenshot(channel: IOBluetoothRFCOMMChannel) {
-        let path = "/tmp/tabletpen-ss.png"
+        let t0 = CFAbsoluteTimeGetCurrent()
+
+        // Capture directly as JPEG (single subprocess, no PNG→JPEG conversion)
         let jpgPath = "/tmp/tabletpen-ss.jpg"
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-        proc.arguments = ["-x", "-t", "png", "-r", path]
+        proc.arguments = ["-x", "-t", "jpg", "-r", jpgPath]
         try? proc.run()
         proc.waitUntilExit()
+        let t1 = CFAbsoluteTimeGetCurrent()
 
-        // Convert to lower quality JPEG (50%) and scale down for faster BT transfer
-        let convert = Process()
-        convert.executableURL = URL(fileURLWithPath: "/usr/bin/sips")
-        convert.arguments = ["-s", "formatOptions", "50",
-                             "-Z", "1920",  // max dimension 1920px
-                             "-s", "format", "jpeg",
-                             path, "--out", jpgPath]
-        try? convert.run()
-        convert.waitUntilExit()
+        // Load and resize + recompress in-memory via ImageIO
+        guard let source = CGImageSourceCreateWithURL(
+            URL(fileURLWithPath: jpgPath) as CFURL, nil
+        ) else { print("Failed to load capture"); return }
 
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: jpgPath)) else {
-            print("Capture failed"); return
-        }
-        print("Sending \(data.count) bytes...")
+        // Thumbnail with max dimension — fast hardware-accelerated resize
+        let thumbOpts: [CFString: Any] = [
+            kCGImageSourceThumbnailMaxPixelSize: maxDimension,
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true
+        ]
+        guard let thumb = CGImageSourceCreateThumbnailAtIndex(
+            source, 0, thumbOpts as CFDictionary
+        ) else { print("Resize failed"); return }
+        let t2 = CFAbsoluteTimeGetCurrent()
 
-        var size = UInt32(data.count).bigEndian
+        // Re-encode to JPEG at target quality (in memory)
+        let outData = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(
+            outData, "public.jpeg" as CFString, 1, nil
+        ) else { print("JPEG init failed"); return }
+        CGImageDestinationAddImage(dest, thumb, [
+            kCGImageDestinationLossyCompressionQuality: Double(jpegQuality) / 100.0
+        ] as CFDictionary)
+        guard CGImageDestinationFinalize(dest) else { print("JPEG encode failed"); return }
+        let t3 = CFAbsoluteTimeGetCurrent()
+
+        // Send over Bluetooth
+        let bytes = outData as Data
+        var size = UInt32(bytes.count).bigEndian
         withUnsafeMutablePointer(to: &size) { p in _ = channel.writeSync(p, length: 4) }
 
         let mtu = max(Int(channel.getMTU()), 672)
         var off = 0
-        while off < data.count {
-            let n = min(mtu, data.count - off)
-            data.withUnsafeBytes { buf in
+        while off < bytes.count {
+            let n = min(mtu, bytes.count - off)
+            bytes.withUnsafeBytes { buf in
                 _ = channel.writeSync(
                     UnsafeMutableRawPointer(mutating: buf.baseAddress!.advanced(by: off)),
                     length: UInt16(n))
             }
             off += n
         }
-        print("Sent")
+        let t4 = CFAbsoluteTimeGetCurrent()
+
+        let captureMs = Int((t1 - t0) * 1000)
+        let resizeMs = Int((t2 - t1) * 1000)
+        let encodeMs = Int((t3 - t2) * 1000)
+        let sendMs = Int((t4 - t3) * 1000)
+        let totalMs = Int((t4 - t0) * 1000)
+        let kb = bytes.count / 1024
+        print("\(thumb.width)x\(thumb.height) \(kb)KB — capture:\(captureMs)ms resize:\(resizeMs)ms encode:\(encodeMs)ms send:\(sendMs)ms total:\(totalMs)ms")
     }
 }
 
 let server = ScreenshotServer()
-if CommandLine.arguments.count > 1 {
-    server.targetName = CommandLine.arguments[1]
-    print("Filtering to devices matching: \(server.targetName!)")
+
+// Parse args: [device_name] [--quality 0.35] [--max 1280]
+var args = Array(CommandLine.arguments.dropFirst())
+while !args.isEmpty {
+    let arg = args.removeFirst()
+    if arg == "--quality" || arg == "-q", let v = args.first, let i = Int(v) {
+        jpegQuality = i; args.removeFirst()
+    } else if arg == "--max" || arg == "-m", let v = args.first, let i = Int(v) {
+        maxDimension = i; args.removeFirst()
+    } else if !arg.hasPrefix("-") {
+        server.targetName = arg
+    }
 }
+if let name = server.targetName {
+    print("Device filter: \(name)")
+}
+print("Quality: \(jpegQuality), Max dimension: \(maxDimension)px")
 server.start()
 signal(SIGINT) { _ in exit(0) }
 RunLoop.main.run()
