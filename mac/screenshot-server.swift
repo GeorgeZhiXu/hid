@@ -221,6 +221,8 @@ class ScreenshotServer: NSObject, IOBluetoothRFCOMMChannelDelegate {
     var channel: IOBluetoothRFCOMMChannel?
     var tablet: IOBluetoothDevice?
     var targetName: String?
+    private var livenessTimer: Timer?
+    private var lastDataTime: CFAbsoluteTime = 0
 
     // Saved last device for fast reconnect
     private var lastDeviceAddress: String? {
@@ -411,6 +413,8 @@ class ScreenshotServer: NSObject, IOBluetoothRFCOMMChannelDelegate {
                 lastDeviceChannel = ch.getID()
             }
             print("BT connected to \(tablet?.name ?? "?") on ch=\(ch.getID())")
+            self.lastDataTime = CFAbsoluteTimeGetCurrent()
+            self.startLivenessTimer()
             sendWifiInfo(channel: ch)
         } else {
             print("BT delegate: connection failed (\(err))")
@@ -422,6 +426,7 @@ class ScreenshotServer: NSObject, IOBluetoothRFCOMMChannelDelegate {
         guard let ptr = ptr else { return }
         let cmd = String(data: Data(bytes: ptr, count: len), encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        self.lastDataTime = CFAbsoluteTimeGetCurrent()
         print("BT received: '\(cmd)'")
         if cmd == "screenshot" {
             DispatchQueue.global().async { self.sendScreenshotBT(channel: ch) }
@@ -467,6 +472,33 @@ class ScreenshotServer: NSObject, IOBluetoothRFCOMMChannelDelegate {
         tablet = nil
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { self.start()
         }
+    }
+
+    private func startLivenessTimer() {
+        stopLivenessTimer()
+        livenessTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
+            guard let self = self, let ch = self.channel else { return }
+            let elapsed = CFAbsoluteTimeGetCurrent() - self.lastDataTime
+            // If no data for 30s and channel exists, try a write to test liveness
+            if elapsed > 30 {
+                // Try writing a no-op byte to test channel liveness
+                var ping: UInt8 = 0
+                let result = ch.writeSync(&ping, length: 0) // zero-length write tests connection
+                if result != kIOReturnSuccess {
+                    print("BT channel stale (no data for \(Int(elapsed))s, write failed) — reconnecting")
+                    self.stopLivenessTimer()
+                    self.channel = nil
+                    self.tablet = nil
+                    self.connectRetryDelay = 0.5
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self.start() }
+                }
+            }
+        }
+    }
+
+    private func stopLivenessTimer() {
+        livenessTimer?.invalidate()
+        livenessTimer = nil
     }
 
     private func sendScreenshotBT(channel: IOBluetoothRFCOMMChannel) {
