@@ -1,5 +1,7 @@
 package com.hid.tabletpen
 
+import android.graphics.Bitmap
+import android.graphics.Color
 import android.graphics.RectF
 import kotlin.math.pow
 
@@ -73,6 +75,41 @@ object PenMath {
         val left = (viewW - rectW) / 2f
         val top = (viewH - rectH) / 2f
         return RectF(left, top, left + rectW, top + rectH)
+    }
+
+    /**
+     * Detect whether a bitmap is light or dark by sampling pixel brightness.
+     * Returns Color.BLACK for light backgrounds, Color.WHITE for dark.
+     */
+    fun detectContrastColor(bitmap: Bitmap?): Int {
+        if (bitmap == null || bitmap.width == 0 || bitmap.height == 0) return Color.WHITE
+
+        val w = bitmap.width
+        val h = bitmap.height
+        // Sample center + 4 quadrant centers
+        val points = listOf(
+            Pair(w / 2, h / 2),
+            Pair(w / 4, h / 4),
+            Pair(3 * w / 4, h / 4),
+            Pair(w / 4, 3 * h / 4),
+            Pair(3 * w / 4, 3 * h / 4)
+        )
+
+        var totalBrightness = 0f
+        var count = 0
+        for ((x, y) in points) {
+            if (x in 0 until w && y in 0 until h) {
+                val pixel = bitmap.getPixel(x, y)
+                val r = Color.red(pixel)
+                val g = Color.green(pixel)
+                val b = Color.blue(pixel)
+                totalBrightness += (r + g + b) / 3f
+                count++
+            }
+        }
+
+        val avgBrightness = if (count > 0) totalBrightness / count else 0f
+        return if (avgBrightness > 128f) Color.BLACK else Color.WHITE
     }
 
     /**

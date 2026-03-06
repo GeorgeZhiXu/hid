@@ -49,8 +49,10 @@ class DrawPadView @JvmOverloads constructor(
 
     var inputMode: InputMode = InputMode.DIGITIZER
     var cursorStyle: CursorStyle = CursorStyle.CROSSHAIR
+    var strokeColorSetting: StrokeColor = StrokeColor.AUTO
 
     private var settingFocusRatio = false
+    private var autoStrokeColor: Int = Color.WHITE  // cached auto-detected color
 
     var targetAspectRatio: Float = 16f / 10f
         set(value) {
@@ -85,6 +87,9 @@ class DrawPadView @JvmOverloads constructor(
     fun setScreenshot(bitmap: Bitmap) {
         fullBitmap = bitmap
         backgroundBitmap = applyFocusCrop(bitmap)
+        if (strokeColorSetting == StrokeColor.AUTO) {
+            autoStrokeColor = PenMath.detectContrastColor(backgroundBitmap)
+        }
         invalidate()
     }
 
@@ -774,7 +779,17 @@ class DrawPadView @JvmOverloads constructor(
             canvas.drawRect(activeRect, boundaryPaint)
         }
 
-        // Draw strokes
+        // Draw strokes with dynamic color
+        val sc = when (strokeColorSetting) {
+            StrokeColor.AUTO -> autoStrokeColor
+            StrokeColor.WHITE -> Color.WHITE
+            StrokeColor.BLACK -> Color.BLACK
+            StrokeColor.RED -> Color.RED
+            StrokeColor.BLUE -> Color.BLUE
+        }
+        strokePaint.color = sc
+        // Shadow is inverse for visibility on any background
+        strokeShadowPaint.color = if (sc == Color.BLACK) Color.WHITE else Color.BLACK
         if (transparentMode) {
             canvas.drawPath(path, strokeShadowPaint)
         }

@@ -7,6 +7,18 @@ enum class InputMode { DIGITIZER, MOUSE }
 
 enum class OrientationMode { AUTO, PORTRAIT, LANDSCAPE }
 
+enum class StrokeColor {
+    AUTO,       // detect from screenshot brightness
+    WHITE,
+    BLACK,
+    RED,
+    BLUE;
+
+    companion object {
+        val LABELS = listOf("Auto", "White", "Black", "Red", "Blue")
+    }
+}
+
 enum class CursorStyle {
     NONE,       // invisible
     CROSSHAIR,  // current default: circle + crosshair lines
@@ -42,7 +54,8 @@ data class AppSettings(
     val scrollSensitivity: Float = 2.0f,    // scroll speed multiplier (0.5–5.0)
     val pinchSensitivity: Float = 30f,      // pinch zoom multiplier (5–60)
     val pinchThreshold: Float = 0.01f,      // min distance-change ratio to trigger pinch (0.005–0.05)
-    val cursorStyle: CursorStyle = CursorStyle.CROSSHAIR
+    val cursorStyle: CursorStyle = CursorStyle.CROSSHAIR,
+    val strokeColor: StrokeColor = StrokeColor.AUTO
 ) {
     companion object {
         private const val PREFS = "tabletpen_settings"
@@ -59,6 +72,7 @@ data class AppSettings(
         private const val KEY_PINCH_SENS = "pinch_sens"
         private const val KEY_PINCH_THRESH = "pinch_thresh"
         private const val KEY_CURSOR_STYLE = "cursor_style"
+        private const val KEY_STROKE_COLOR = "stroke_color"
         private const val KEY_LAST_DEVICE = "last_device"
         private const val KEY_KNOWN_DEVICES = "known_devices"
 
@@ -123,7 +137,8 @@ data class AppSettings(
                 scrollSensitivity = p.getFloat(KEY_SCROLL_SENS, 2.0f),
                 pinchSensitivity = p.getFloat(KEY_PINCH_SENS, 30f),
                 pinchThreshold = p.getFloat(KEY_PINCH_THRESH, 0.01f),
-                cursorStyle = CursorStyle.entries.getOrElse(p.getInt(KEY_CURSOR_STYLE, 1)) { CursorStyle.CROSSHAIR }
+                cursorStyle = CursorStyle.entries.getOrElse(p.getInt(KEY_CURSOR_STYLE, 1)) { CursorStyle.CROSSHAIR },
+                strokeColor = StrokeColor.entries.getOrElse(p.getInt(KEY_STROKE_COLOR, 0)) { StrokeColor.AUTO }
             )
         }
 
@@ -142,6 +157,7 @@ data class AppSettings(
                 .putFloat(KEY_PINCH_SENS, s.pinchSensitivity)
                 .putFloat(KEY_PINCH_THRESH, s.pinchThreshold)
                 .putInt(KEY_CURSOR_STYLE, s.cursorStyle.ordinal)
+                .putInt(KEY_STROKE_COLOR, s.strokeColor.ordinal)
                 .apply()
         }
     }

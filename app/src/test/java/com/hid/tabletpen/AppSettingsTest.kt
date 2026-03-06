@@ -50,4 +50,18 @@ class AppSettingsTest {
         assertEquals(0, InputMode.DIGITIZER.ordinal)
         assertEquals(1, InputMode.MOUSE.ordinal)
     }
+
+    @Test
+    fun `StrokeColor ordinals`() {
+        assertEquals(0, StrokeColor.AUTO.ordinal)
+        assertEquals(1, StrokeColor.WHITE.ordinal)
+        assertEquals(2, StrokeColor.BLACK.ordinal)
+        assertEquals(3, StrokeColor.RED.ordinal)
+        assertEquals(4, StrokeColor.BLUE.ordinal)
+    }
+
+    @Test
+    fun `StrokeColor labels count matches entries`() {
+        assertEquals(StrokeColor.entries.size, StrokeColor.LABELS.size)
+    }
 }

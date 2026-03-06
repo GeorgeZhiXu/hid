@@ -181,6 +181,7 @@ class MainActivity : AppCompatActivity(),
         drawPad.scrollSensitivity = settings.scrollSensitivity
         drawPad.pinchThreshold = settings.pinchThreshold
         drawPad.cursorStyle = settings.cursorStyle
+        drawPad.strokeColorSetting = settings.strokeColor
     }
 
     // ---- Pen event → BT HID digitizer report ----
@@ -322,6 +323,15 @@ class MainActivity : AppCompatActivity(),
         }
         layout.addView(cursorSpinner)
 
+        // Stroke color
+        layout.addView(TextView(this).apply { text = "Stroke Color"; setPadding(0, 16, 0, 4) })
+        val strokeSpinner = Spinner(this).apply {
+            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item,
+                StrokeColor.LABELS)
+            setSelection(settings.strokeColor.ordinal)
+        }
+        layout.addView(strokeSpinner)
+
         // Clear on screenshot
         val clearCheck = android.widget.CheckBox(this).apply {
             text = "Clear strokes on new screenshot"
@@ -457,7 +467,8 @@ class MainActivity : AppCompatActivity(),
                     scrollSensitivity = 0.5f + scrollSensSeek.progress / 100f * 4.5f,
                     pinchSensitivity = 5f + pinchSensSeek.progress / 100f * 55f,
                     pinchThreshold = 0.005f + pinchThreshSeek.progress / 100f * 0.045f,
-                    cursorStyle = CursorStyle.entries[cursorSpinner.selectedItemPosition]
+                    cursorStyle = CursorStyle.entries[cursorSpinner.selectedItemPosition],
+                    strokeColor = StrokeColor.entries[strokeSpinner.selectedItemPosition]
                 )
                 AppSettings.save(this, settings)
                 applySettingsToDrawPad()

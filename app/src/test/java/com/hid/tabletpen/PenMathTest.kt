@@ -169,3 +169,11 @@ class PenMathTest {
         assertNull(PenMath.parseWifiInfo("wifi:"))
     }
 }
+
+class StrokeColorTest {
+
+    @Test
+    fun `null bitmap returns white`() {
+        assertEquals(android.graphics.Color.WHITE, PenMath.detectContrastColor(null))
+    }
+}
