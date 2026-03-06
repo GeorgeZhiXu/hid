@@ -4,6 +4,7 @@
 
 ### Auto-recapture screenshot after drawing
 After the user finishes a stroke (pen lifts), automatically re-capture the Mac screen after a short delay. This lets the user see the result of their drawing without manually tapping Screenshot.
+**Depends on:** Adaptive screenshot quality (need fast enough capture to not disrupt drawing).
 
 ### Tilt and rotation support
 Samsung S Pen and Boox stylus report tilt data. Add tilt X/Y to the HID descriptor for apps that support it (Photoshop, Krita).
