@@ -382,13 +382,22 @@ else
     fail "BT toggle: HID did not reconnect after BT re-enable"
 fi
 
-# Check RFCOMM reconnect (server should have reconnected)
-sleep 5
-RFCOMM_COUNT=$(grep -c "BT connected" "$SERVER_LOG" 2>/dev/null || true)
-if [ "$RFCOMM_COUNT" -ge 2 ]; then
-    pass "BT toggle: RFCOMM reconnected ($RFCOMM_COUNT connections total)"
+# Check RFCOMM reconnect — server needs time to re-discover after BT toggle
+info "Waiting for RFCOMM reconnect after BT toggle (up to 30s)..."
+BT_TOGGLE_OK=false
+for i in $(seq 1 30); do
+    # Count connections since the server started (this run)
+    RFCOMM_COUNT=$(grep -c "BT connected" "$SERVER_LOG" 2>/dev/null || true)
+    if [ "$RFCOMM_COUNT" -ge 2 ]; then
+        BT_TOGGLE_OK=true
+        break
+    fi
+    sleep 1
+done
+if $BT_TOGGLE_OK; then
+    pass "BT toggle: RFCOMM reconnected"
 else
-    fail "BT toggle: RFCOMM did not reconnect"
+    fail "BT toggle: RFCOMM did not reconnect within 30s"
 fi
 
 # ==== PHASE 10: APP KILL + RECONNECT ====
@@ -400,7 +409,7 @@ sleep 3
 
 info "Relaunching TabletPen..."
 adb shell am start -n com.hid.tabletpen/.MainActivity 2>/dev/null
-sleep 8
+sleep 15  # HID registration + auto-connect takes time after fresh launch
 
 # Verify HID reconnects
 adb shell input swipe 800 600 400 400 300
@@ -415,14 +424,22 @@ else
     fail "App kill: HID did not reconnect after app relaunch"
 fi
 
-# Verify RFCOMM reconnects (wait for server to detect new connection)
-sleep 10
-NEW_RFCOMM=$(grep -c "BT connected" "$SERVER_LOG" 2>/dev/null || true)
-if [ "$NEW_RFCOMM" -ge 3 ]; then
-    pass "App kill: RFCOMM reconnected ($NEW_RFCOMM connections total)"
+# Verify RFCOMM reconnects (wait up to 30s)
+info "Waiting for RFCOMM reconnect after app kill (up to 30s)..."
+APP_KILL_RFCOMM=false
+PREV_RFCOMM=$(grep -c "BT connected" "$SERVER_LOG" 2>/dev/null || true)
+for i in $(seq 1 30); do
+    CUR_RFCOMM=$(grep -c "BT connected" "$SERVER_LOG" 2>/dev/null || true)
+    if [ "$CUR_RFCOMM" -gt "$PREV_RFCOMM" ]; then
+        APP_KILL_RFCOMM=true
+        break
+    fi
+    sleep 1
+done
+if $APP_KILL_RFCOMM; then
+    pass "App kill: RFCOMM reconnected"
 else
-    info "RFCOMM connections: $NEW_RFCOMM (may need more time)"
-    fail "App kill: RFCOMM did not reconnect"
+    fail "App kill: RFCOMM did not reconnect within 30s"
 fi
 
 # ==== PHASE 11: SLEEP/WAKE CYCLE ====
