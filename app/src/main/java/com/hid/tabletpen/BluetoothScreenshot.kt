@@ -5,7 +5,10 @@ import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothServerSocket
 import android.bluetooth.BluetoothSocket
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.Handler
@@ -56,6 +59,21 @@ class BluetoothScreenshot(private val context: Context) {
     // Bluetooth RFCOMM
     private val running = AtomicBoolean(false)
     private val connectedSocket = AtomicReference<BluetoothSocket?>(null)
+    @Volatile private var currentServerSocket: BluetoothServerSocket? = null
+
+    // Detect BT disable to unblock accept()
+    private val btStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(ctx: Context, intent: Intent) {
+            if (intent.action == BluetoothAdapter.ACTION_STATE_CHANGED) {
+                val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, -1)
+                if (state == BluetoothAdapter.STATE_OFF || state == BluetoothAdapter.STATE_TURNING_OFF) {
+                    Log.i(TAG, "BT turning off — closing server socket to unblock accept()")
+                    try { currentServerSocket?.close() } catch (_: Exception) {}
+                    currentServerSocket = null
+                }
+            }
+        }
+    }
 
     val isMacConnected: Boolean get() = connectedSocket.get()?.isConnected == true || isWifiConnected
 
@@ -85,11 +103,13 @@ class BluetoothScreenshot(private val context: Context) {
 
     fun startServer() {
         if (running.getAndSet(true)) return
+        context.registerReceiver(btStateReceiver, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED))
         Thread({ serverLoop() }, "BtScreenshot-Server").start()
     }
 
     fun stopServer() {
         running.set(false)
+        try { context.unregisterReceiver(btStateReceiver) } catch (_: Exception) {}
         stopStream()
         try { wifiSocket?.close() } catch (_: Exception) {}
         try { tabletServer?.close() } catch (_: Exception) {}
@@ -106,6 +126,7 @@ class BluetoothScreenshot(private val context: Context) {
                 Log.i(TAG, "Starting RFCOMM server...")
                 val server: BluetoothServerSocket =
                     bt.listenUsingInsecureRfcommWithServiceRecord(SERVICE_NAME, SERVICE_UUID)
+                currentServerSocket = server
 
                 while (running.get()) {
                     Log.i(TAG, "Waiting for Mac to connect...")
@@ -138,6 +159,7 @@ class BluetoothScreenshot(private val context: Context) {
                     disconnectWifi()
                 }
 
+                currentServerSocket = null
                 server.close()
             } catch (e: Exception) {
                 if (running.get()) {
