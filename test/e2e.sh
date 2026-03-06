@@ -376,11 +376,11 @@ fi
 
 info "Re-enabling tablet Bluetooth..."
 adb shell cmd bluetooth_manager enable 2>/dev/null || adb shell svc bluetooth enable 2>/dev/null
-sleep 10
+sleep 15
 
-# Bring app to foreground (BT toggle may have backgrounded it)
+# Bring app to foreground and give HID time to re-register + auto-connect
 adb shell am start -n com.hid.tabletpen/.MainActivity 2>/dev/null
-sleep 5
+sleep 10
 
 # Verify HID reconnects
 info "Checking HID reconnect after BT toggle..."
@@ -416,6 +416,10 @@ fi
 
 # ==== PHASE 10: APP KILL + RECONNECT ====
 
+# Recovery: ensure app is running and HID has time to settle
+adb shell am start -n com.hid.tabletpen/.MainActivity 2>/dev/null
+sleep 5
+
 info "--- Connection: App kill + reconnect ---"
 info "Force-stopping TabletPen app..."
 adb shell am force-stop com.hid.tabletpen 2>/dev/null
@@ -423,7 +427,7 @@ sleep 3
 
 info "Relaunching TabletPen..."
 adb shell am start -n com.hid.tabletpen/.MainActivity 2>/dev/null
-sleep 15  # HID registration + auto-connect takes time after fresh launch
+sleep 20  # HID registration + auto-connect takes time after fresh launch on Boox
 
 # Verify HID reconnects
 adb shell input swipe 800 600 400 400 300
