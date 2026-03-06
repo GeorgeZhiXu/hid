@@ -69,14 +69,61 @@ class SCKCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         return buf
     }
 
+    private var previousBuffer: CVPixelBuffer?
+    private var unchangedCount = 0
+
     // SCStreamOutput — called on every frame by the system
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
                 of type: SCStreamOutputType) {
         guard type == .screen else { return }
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+
+        // Adaptive FPS: skip if screen hasn't changed
+        if let prev = previousBuffer, !hasPixelsChanged(prev, pixelBuffer) {
+            unchangedCount += 1
+            if unchangedCount < 30 { return } // skip up to 30 frames (~1s at 30fps), then send 1 keepalive
+            unchangedCount = 0
+        } else {
+            unchangedCount = 0
+        }
+
         lock.lock()
+        previousBuffer = latestBuffer
         latestBuffer = pixelBuffer
         lock.unlock()
+    }
+
+    /// Quick pixel diff: sample 16 random-ish positions
+    private func hasPixelsChanged(_ a: CVPixelBuffer, _ b: CVPixelBuffer) -> Bool {
+        let w = CVPixelBufferGetWidth(a)
+        let h = CVPixelBufferGetHeight(a)
+        guard w == CVPixelBufferGetWidth(b), h == CVPixelBufferGetHeight(b) else { return true }
+
+        CVPixelBufferLockBaseAddress(a, .readOnly)
+        CVPixelBufferLockBaseAddress(b, .readOnly)
+        defer {
+            CVPixelBufferUnlockBaseAddress(a, .readOnly)
+            CVPixelBufferUnlockBaseAddress(b, .readOnly)
+        }
+
+        guard let ptrA = CVPixelBufferGetBaseAddress(a),
+              let ptrB = CVPixelBufferGetBaseAddress(b) else { return true }
+
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(a)
+        let threshold = 10  // per-channel difference threshold
+
+        // Sample 16 positions (4x4 grid)
+        for gy in 0..<4 {
+            for gx in 0..<4 {
+                let x = (w * (2 * gx + 1)) / 8
+                let y = (h * (2 * gy + 1)) / 8
+                let offset = y * bytesPerRow + x * 4  // BGRA = 4 bytes per pixel
+                let bA = ptrA.load(fromByteOffset: offset, as: UInt8.self)
+                let bB = ptrB.load(fromByteOffset: offset, as: UInt8.self)
+                if abs(Int(bA) - Int(bB)) > threshold { return true }
+            }
+        }
+        return false
     }
 
     // SCStreamDelegate — handle errors

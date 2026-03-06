@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.9.0 (2026-03-06)
+
+### Features
+- **Ghost stroke prediction** — semi-transparent stroke trail appears instantly while drawing, cleared when Mac screenshot confirms
+- **Predicted cursor** — ghost cursor drawn 30ms ahead of actual position for perceived zero-latency
+- **Adaptive FPS streaming** — Mac server skips unchanged frames (16-pixel sample diff). Active drawing: full FPS. Static screen: ~1 FPS. Saves bandwidth + battery.
+- **Show ghost stroke setting** — toggle in Settings (on by default)
+
 ## v0.8.0 (2026-03-06)
 
 ### Features

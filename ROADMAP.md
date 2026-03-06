@@ -56,7 +56,7 @@ Implementation approach:
 - Client composites tiles onto the previous frame
 - Similar to VNC's Tight encoding but simpler (JPEG tiles only)
 
-### Local cursor prediction
+### ~~Local cursor prediction~~ (Implemented v0.9.0)
 Render the pen/mouse cursor locally on the tablet with zero latency, before the Mac screen update arrives. The actual pixel data follows behind but the user sees immediate cursor response. This is VNC's key trick for perceived responsiveness.
 
 ### WebP encoding

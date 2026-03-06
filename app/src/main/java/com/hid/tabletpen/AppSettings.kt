@@ -56,7 +56,8 @@ data class AppSettings(
     val pinchThreshold: Float = 0.01f,      // min distance-change ratio to trigger pinch (0.005–0.05)
     val cursorStyle: CursorStyle = CursorStyle.CROSSHAIR,
     val strokeColor: StrokeColor = StrokeColor.AUTO,
-    val autoRecapture: Boolean = false
+    val autoRecapture: Boolean = false,
+    val showGhostStroke: Boolean = true
 ) {
     companion object {
         private const val PREFS = "tabletpen_settings"
@@ -75,6 +76,7 @@ data class AppSettings(
         private const val KEY_CURSOR_STYLE = "cursor_style"
         private const val KEY_STROKE_COLOR = "stroke_color"
         private const val KEY_AUTO_RECAPTURE = "auto_recapture"
+        private const val KEY_GHOST_STROKE = "ghost_stroke"
         private const val KEY_LAST_DEVICE = "last_device"
         private const val KEY_KNOWN_DEVICES = "known_devices"
 
@@ -141,7 +143,8 @@ data class AppSettings(
                 pinchThreshold = p.getFloat(KEY_PINCH_THRESH, 0.01f),
                 cursorStyle = CursorStyle.entries.getOrElse(p.getInt(KEY_CURSOR_STYLE, 1)) { CursorStyle.CROSSHAIR },
                 strokeColor = StrokeColor.entries.getOrElse(p.getInt(KEY_STROKE_COLOR, 0)) { StrokeColor.AUTO },
-                autoRecapture = p.getBoolean(KEY_AUTO_RECAPTURE, false)
+                autoRecapture = p.getBoolean(KEY_AUTO_RECAPTURE, false),
+                showGhostStroke = p.getBoolean(KEY_GHOST_STROKE, true)
             )
         }
 
@@ -162,6 +165,7 @@ data class AppSettings(
                 .putInt(KEY_CURSOR_STYLE, s.cursorStyle.ordinal)
                 .putInt(KEY_STROKE_COLOR, s.strokeColor.ordinal)
                 .putBoolean(KEY_AUTO_RECAPTURE, s.autoRecapture)
+                .putBoolean(KEY_GHOST_STROKE, s.showGhostStroke)
                 .apply()
         }
     }

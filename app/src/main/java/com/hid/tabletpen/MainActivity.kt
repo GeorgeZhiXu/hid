@@ -199,6 +199,7 @@ class MainActivity : AppCompatActivity(),
         drawPad.pinchThreshold = settings.pinchThreshold
         drawPad.cursorStyle = settings.cursorStyle
         drawPad.strokeColorSetting = settings.strokeColor
+        drawPad.showGhostStroke = settings.showGhostStroke
     }
 
     // ---- Pen event → BT HID digitizer report ----
@@ -398,6 +399,13 @@ class MainActivity : AppCompatActivity(),
         }
         layout.addView(recaptureCheck)
 
+        // Ghost stroke prediction
+        val ghostCheck = android.widget.CheckBox(this).apply {
+            text = "Show ghost stroke prediction"
+            isChecked = settings.showGhostStroke
+        }
+        layout.addView(ghostCheck)
+
         // Clear on screenshot
         val clearCheck = android.widget.CheckBox(this).apply {
             text = "Clear strokes on new screenshot"
@@ -535,7 +543,8 @@ class MainActivity : AppCompatActivity(),
                     pinchThreshold = 0.005f + pinchThreshSeek.progress / 100f * 0.045f,
                     cursorStyle = CursorStyle.entries[cursorSpinner.selectedItemPosition],
                     strokeColor = StrokeColor.entries[strokeSpinner.selectedItemPosition],
-                    autoRecapture = recaptureCheck.isChecked
+                    autoRecapture = recaptureCheck.isChecked,
+                    showGhostStroke = ghostCheck.isChecked
                 )
                 AppSettings.save(this, settings)
                 applySettingsToDrawPad()

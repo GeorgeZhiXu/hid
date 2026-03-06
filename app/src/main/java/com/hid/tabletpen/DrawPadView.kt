@@ -89,6 +89,7 @@ class DrawPadView @JvmOverloads constructor(
     fun setScreenshot(bitmap: Bitmap) {
         fullBitmap = bitmap
         backgroundBitmap = applyFocusCrop(bitmap)
+        ghostPath.reset()  // Mac screen confirms predicted strokes
         if (strokeColorSetting == StrokeColor.AUTO) {
             autoStrokeColor = PenMath.detectContrastColor(backgroundBitmap)
         }
@@ -200,6 +201,19 @@ class DrawPadView @JvmOverloads constructor(
         strokeJoin = Paint.Join.ROUND
     }
 
+    // Ghost stroke: predicted pen trail ahead of Mac screen confirmation
+    private val ghostPath = Path()
+    private var ghostLastX = 0f
+    private var ghostLastY = 0f
+    private val ghostPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(80, 100, 180, 255)
+        style = Paint.Style.STROKE
+        strokeWidth = 3f
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+    var showGhostStroke: Boolean = true
+
     private val cursorPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.argb(128, 100, 180, 255)
         style = Paint.Style.STROKE
@@ -241,6 +255,9 @@ class DrawPadView @JvmOverloads constructor(
     private var cursorY = -1f
     private var currentPressure = 0f
     private var isDown = false
+    private var velocityX = 0f
+    private var velocityY = 0f
+    private var lastEventTimeNs = 0L
     private var lastToolType = MotionEvent.TOOL_TYPE_UNKNOWN
 
     // Digitizer click stabilization: dead zone on initial pen-down
@@ -282,6 +299,7 @@ class DrawPadView @JvmOverloads constructor(
 
     fun clearStrokes() {
         path.reset()
+        ghostPath.reset()
         invalidate()
     }
 
@@ -341,6 +359,15 @@ class DrawPadView @JvmOverloads constructor(
         tiltX: Float = 0f, tiltY: Float = 0f
     ) {
         if (activeRect.isEmpty) return
+
+        // Track velocity for cursor prediction
+        val now = System.nanoTime()
+        val dtMs = (now - lastEventTimeNs) / 1_000_000f
+        if (dtMs > 0 && dtMs < 100 && cursorX >= 0) {
+            velocityX = (x - cursorX) / dtMs
+            velocityY = (y - cursorY) / dtMs
+        }
+        lastEventTimeNs = now
 
         cursorX = x
         cursorY = y
@@ -433,6 +460,16 @@ class DrawPadView @JvmOverloads constructor(
                         path.quadTo(lastX, lastY, (x + lastX) / 2, (y + lastY) / 2)
                         lastX = x
                         lastY = y
+                        // Ghost stroke: accumulate predicted trail
+                        if (showGhostStroke) {
+                            if (ghostPath.isEmpty) {
+                                ghostPath.moveTo(x, y)
+                            } else {
+                                ghostPath.quadTo(ghostLastX, ghostLastY, (x + ghostLastX) / 2, (y + ghostLastY) / 2)
+                            }
+                            ghostLastX = x
+                            ghostLastY = y
+                        }
                         val nx = ((x - activeRect.left) / activeRect.width()).coerceIn(0f, 1f)
                         val ny = ((y - activeRect.top) / activeRect.height()).coerceIn(0f, 1f)
                         dispatchPen(tipDown = true, barrel = barrel, inRange = true, nx, ny, pressure, toolType, tiltX, tiltY)
@@ -791,6 +828,12 @@ class DrawPadView @JvmOverloads constructor(
             canvas.drawRect(activeRect, boundaryPaint)
         }
 
+        // Ghost stroke prediction (drawn before main strokes, semi-transparent)
+        if (showGhostStroke && !ghostPath.isEmpty) {
+            ghostPaint.strokeWidth = strokePaint.strokeWidth
+            canvas.drawPath(ghostPath, ghostPaint)
+        }
+
         // Pressure-based stroke width
         val minWidth = 1f
         val maxWidth = 8f
@@ -812,6 +855,16 @@ class DrawPadView @JvmOverloads constructor(
             canvas.drawPath(path, strokeShadowPaint)
         }
         canvas.drawPath(path, strokePaint)
+
+        // Draw predicted cursor (ghost ahead of actual position)
+        if (cursorX >= 0 && cursorY >= 0 && isDown && (velocityX != 0f || velocityY != 0f)) {
+            val predMs = 30f  // predict 30ms ahead
+            val predX = cursorX + velocityX * predMs
+            val predY = cursorY + velocityY * predMs
+            val predR = 12f + currentPressure * 15f
+            val predPaint = Paint(cursorPaint).apply { alpha = 60 }
+            canvas.drawCircle(predX, predY, predR, predPaint)
+        }
 
         // Draw cursor
         if (cursorX >= 0 && cursorY >= 0 && cursorStyle != CursorStyle.NONE) {
