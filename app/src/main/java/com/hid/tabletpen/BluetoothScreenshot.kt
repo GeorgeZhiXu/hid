@@ -178,11 +178,10 @@ class BluetoothScreenshot(private val context: Context) {
         }, "BT-WifiInfo")
         readerThread.start()
         readerThread.join(5000)
-        if (!readerThread.isAlive) {
-            btReadBusy.set(false)
-        } else {
-            Log.w(TAG, "WiFi info read still waiting — BT screenshots blocked until it completes")
-        }
+        // Always clear the busy flag after timeout — allow BT screenshots
+        // even if WiFi info hasn't arrived yet. The reader thread continues
+        // in background and will connect WiFi when data arrives.
+        btReadBusy.set(false)
     }
 
     /**
