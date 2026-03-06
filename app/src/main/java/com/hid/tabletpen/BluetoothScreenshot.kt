@@ -13,6 +13,7 @@ import android.os.Looper
 import android.util.Log
 import java.io.InputStream
 import java.net.InetSocketAddress
+import java.net.ServerSocket
 import java.net.Socket
 import java.nio.ByteBuffer
 import java.util.UUID
@@ -20,13 +21,12 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Screenshot service supporting both Bluetooth RFCOMM and WiFi TCP.
+ * Screenshot service supporting Bluetooth RFCOMM and WiFi TCP (bidirectional).
  *
- * Flow:
- * 1. Android runs RFCOMM server → Mac connects
- * 2. Mac sends "wifi:<ip>:<port>\n" over RFCOMM
- * 3. Android connects to Mac's TCP server over WiFi
- * 4. Screenshots/streaming use WiFi when available, BT as fallback
+ * WiFi connection tries both directions:
+ * 1. Android connects to Mac's TCP server (Mac-as-server, preferred)
+ * 2. If that fails, Android starts TCP server and Mac connects to it (tablet-as-server, fallback)
+ * Whichever succeeds first is used. Prefers Mac-as-server.
  */
 @SuppressLint("MissingPermission")
 class BluetoothScreenshot(private val context: Context) {
@@ -36,6 +36,7 @@ class BluetoothScreenshot(private val context: Context) {
         private val SERVICE_UUID = UUID.fromString("A5D3E9F0-7B1C-4C2E-9F3A-B8C1D2E4F6A7")
         private const val SERVICE_NAME = "TabletPen Screenshot"
         private const val WIFI_CONNECT_TIMEOUT = 3000
+        private const val TABLET_SERVER_PORT = 9878
     }
 
     interface Listener {
@@ -59,16 +60,19 @@ class BluetoothScreenshot(private val context: Context) {
     val isMacConnected: Boolean get() = connectedSocket.get()?.isConnected == true || isWifiConnected
 
     // WiFi TCP
-    private var wifiSocket: Socket? = null
+    @Volatile private var wifiSocket: Socket? = null
     private var wifiHost: String? = null
     private var wifiPort: Int = 0
     val isWifiConnected: Boolean get() = wifiSocket?.isConnected == true
+
+    // Tablet TCP server (fallback when Mac-as-server is blocked)
+    private var tabletServer: ServerSocket? = null
 
     // Streaming
     private val streaming = AtomicBoolean(false)
     val isStreaming: Boolean get() = streaming.get()
 
-    // Guards BT socket reads — prevents WiFi info reader from conflicting with screenshot reads
+    // Guards BT socket reads
     private val btReadBusy = AtomicBoolean(false)
 
     fun startServer() {
@@ -80,6 +84,7 @@ class BluetoothScreenshot(private val context: Context) {
         running.set(false)
         stopStream()
         try { wifiSocket?.close() } catch (_: Exception) {}
+        try { tabletServer?.close() } catch (_: Exception) {}
         try { connectedSocket.get()?.close() } catch (_: Exception) {}
     }
 
@@ -94,8 +99,6 @@ class BluetoothScreenshot(private val context: Context) {
                 val server: BluetoothServerSocket =
                     bt.listenUsingInsecureRfcommWithServiceRecord(SERVICE_NAME, SERVICE_UUID)
 
-                // Keep server socket open — accept multiple connections
-                // without re-registering SDP record each time
                 while (running.get()) {
                     Log.i(TAG, "Waiting for Mac to connect...")
                     val socket = server.accept()
@@ -103,7 +106,7 @@ class BluetoothScreenshot(private val context: Context) {
                     connectedSocket.set(socket)
                     Log.i(TAG, "Mac connected via BT: ${socket.remoteDevice.name}")
 
-                    readWifiInfo(socket)
+                    readWifiInfoAndConnect(socket)
 
                     // Keep alive — wait for disconnect
                     try {
@@ -115,7 +118,6 @@ class BluetoothScreenshot(private val context: Context) {
                     Log.i(TAG, "Mac disconnected — ready for reconnect")
                     connectedSocket.set(null)
                     disconnectWifi()
-                    // Loop back to accept() immediately — server socket still open
                 }
 
                 server.close()
@@ -128,9 +130,9 @@ class BluetoothScreenshot(private val context: Context) {
         }
     }
 
-    // MARK: - WiFi Discovery & Connection
+    // MARK: - WiFi: Bidirectional Connection
 
-    private fun readWifiInfo(btSocket: BluetoothSocket) {
+    private fun readWifiInfoAndConnect(btSocket: BluetoothSocket) {
         btReadBusy.set(true)
         val readerThread = Thread({
             try {
@@ -150,7 +152,7 @@ class BluetoothScreenshot(private val context: Context) {
                         wifiPort = parts[1].toIntOrNull() ?: 0
                         if (wifiPort > 0) {
                             Log.i(TAG, "WiFi info received: $wifiHost:$wifiPort")
-                            connectWifi()
+                            tryBothDirections(btSocket)
                         }
                     }
                 }
@@ -163,35 +165,128 @@ class BluetoothScreenshot(private val context: Context) {
         readerThread.start()
         readerThread.join(5000)
         if (!readerThread.isAlive) {
-            btReadBusy.set(false) // Thread finished within timeout
+            btReadBusy.set(false)
         } else {
             Log.w(TAG, "WiFi info read still waiting — BT screenshots blocked until it completes")
         }
     }
 
-    private fun connectWifi() {
-        val host = wifiHost ?: return
-        val port = wifiPort
-        Thread({
+    /**
+     * Try both WiFi directions simultaneously:
+     * 1. Connect to Mac's TCP server (preferred)
+     * 2. Start our own TCP server and tell Mac to connect to us (fallback)
+     * First one to succeed wins.
+     */
+    private fun tryBothDirections(btSocket: BluetoothSocket) {
+        val connected = AtomicBoolean(false)
+
+        // Direction 1: Connect to Mac (preferred)
+        val clientThread = Thread({
             try {
-                Log.i(TAG, "Connecting WiFi to $host:$port...")
+                val host = wifiHost ?: return@Thread
+                val port = wifiPort
+                Log.i(TAG, "WiFi trying Mac-as-server: $host:$port...")
                 val sock = Socket()
                 sock.connect(InetSocketAddress(host, port), WIFI_CONNECT_TIMEOUT)
                 sock.tcpNoDelay = true
-                wifiSocket = sock
-                Log.i(TAG, "WiFi connected to $host:$port")
-                mainHandler.post { listener?.onWifiStateChanged(true) }
+                if (connected.compareAndSet(false, true)) {
+                    wifiSocket = sock
+                    Log.i(TAG, "WiFi connected (Mac-as-server): $host:$port")
+                    stopTabletServer()
+                    mainHandler.post { listener?.onWifiStateChanged(true) }
+                } else {
+                    sock.close() // Other direction won
+                }
             } catch (e: Exception) {
-                Log.w(TAG, "WiFi connect failed: ${e.message}")
-                wifiSocket = null
+                Log.i(TAG, "WiFi Mac-as-server failed: ${e.message}")
+            }
+        }, "WiFi-Client")
+
+        // Direction 2: Start tablet server, tell Mac to connect to us
+        val serverThread = Thread({
+            try {
+                // Start TCP server
+                val srv = ServerSocket()
+                srv.reuseAddress = true
+                srv.bind(InetSocketAddress(TABLET_SERVER_PORT))
+                tabletServer = srv
+                Log.i(TAG, "WiFi tablet server listening on port $TABLET_SERVER_PORT")
+
+                // Tell Mac our IP and port over BT
+                val tabletIP = getLocalIP()
+                if (tabletIP != null) {
+                    val msg = "wifiserver:$tabletIP:$TABLET_SERVER_PORT\n"
+                    synchronized(btSocket) {
+                        btSocket.outputStream.write(msg.toByteArray())
+                        btSocket.outputStream.flush()
+                    }
+                    Log.i(TAG, "Sent reverse WiFi info to Mac: $msg".trim())
+                } else {
+                    Log.w(TAG, "Could not determine tablet IP")
+                    srv.close()
+                    return@Thread
+                }
+
+                // Wait for Mac to connect (10s timeout)
+                srv.soTimeout = 10000
+                val sock = srv.accept()
+                sock.tcpNoDelay = true
+                if (connected.compareAndSet(false, true)) {
+                    wifiSocket = sock
+                    Log.i(TAG, "WiFi connected (tablet-as-server)")
+                    mainHandler.post { listener?.onWifiStateChanged(true) }
+                } else {
+                    sock.close() // Other direction won
+                }
+                srv.close()
+                tabletServer = null
+            } catch (e: Exception) {
+                if (!connected.get()) {
+                    Log.i(TAG, "WiFi tablet-as-server failed: ${e.message}")
+                }
+                try { tabletServer?.close() } catch (_: Exception) {}
+                tabletServer = null
+            }
+        }, "WiFi-Server")
+
+        clientThread.start()
+        serverThread.start()
+
+        // Wait for either to succeed
+        Thread({
+            clientThread.join(12000)
+            serverThread.join(12000)
+            if (!connected.get()) {
+                Log.w(TAG, "WiFi failed in both directions — screenshots will use BT")
                 mainHandler.post { listener?.onWifiStateChanged(false) }
             }
-        }, "WiFi-Connect").start()
+        }, "WiFi-Wait").start()
+    }
+
+    private fun getLocalIP(): String? {
+        try {
+            val interfaces = java.net.NetworkInterface.getNetworkInterfaces() ?: return null
+            for (iface in interfaces) {
+                if (iface.isLoopback || !iface.isUp) continue
+                for (addr in iface.inetAddresses) {
+                    if (addr is java.net.Inet4Address && !addr.isLoopbackAddress) {
+                        return addr.hostAddress
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+        return null
+    }
+
+    private fun stopTabletServer() {
+        try { tabletServer?.close() } catch (_: Exception) {}
+        tabletServer = null
     }
 
     private fun disconnectWifi() {
         try { wifiSocket?.close() } catch (_: Exception) {}
         wifiSocket = null
+        stopTabletServer()
         streaming.set(false)
         mainHandler.post { listener?.onWifiStateChanged(false) }
     }
@@ -201,10 +296,8 @@ class BluetoothScreenshot(private val context: Context) {
     fun requestScreenshot() {
         val wifi = wifiSocket
         if (wifi != null && wifi.isConnected) {
-            // WiFi doesn't conflict with BT reader
             Thread({ doRequestWifi(wifi) }, "Screenshot-WiFi").start()
         } else if (btReadBusy.get()) {
-            // WiFi info reader is still blocking on the BT socket — can't read screenshot response
             mainHandler.post { listener?.onScreenshotError("Connecting to Mac... try again") }
         } else {
             val bt = connectedSocket.get()
@@ -263,9 +356,7 @@ class BluetoothScreenshot(private val context: Context) {
             } catch (e: Exception) {
                 Log.e(TAG, "WiFi screenshot failed", e)
                 mainHandler.post { listener?.onScreenshotError(e.message ?: "WiFi error") }
-                // WiFi broken, try to reconnect
                 disconnectWifi()
-                connectWifi()
             }
         }
     }
@@ -284,14 +375,13 @@ class BluetoothScreenshot(private val context: Context) {
 
     fun stopStream() {
         if (!streaming.getAndSet(false)) return
-        // Send stop command if WiFi is still connected
         try {
             wifiSocket?.getOutputStream()?.write("stop\n".toByteArray())
             wifiSocket?.getOutputStream()?.flush()
         } catch (_: Exception) {}
-        // Reconnect WiFi for future single screenshots
         disconnectWifi()
-        connectWifi()
+        // Reconnect WiFi for future use
+        connectedSocket.get()?.let { tryBothDirections(it) }
     }
 
     private fun streamLoop(socket: Socket) {
@@ -329,7 +419,6 @@ class BluetoothScreenshot(private val context: Context) {
 
     // MARK: - Protocol helpers
 
-    /** Read [4-byte BE size][data] frame */
     private fun readFrame(input: InputStream): ByteArray {
         val sizeBytes = readExact(input, 4)
         val size = ByteBuffer.wrap(sizeBytes).int

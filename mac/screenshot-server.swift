@@ -398,6 +398,39 @@ class ScreenshotServer: NSObject, IOBluetoothRFCOMMChannelDelegate {
         print("BT received: '\(cmd)'")
         if cmd == "screenshot" {
             DispatchQueue.global().async { self.sendScreenshotBT(channel: ch) }
+        } else if cmd.hasPrefix("wifiserver:") {
+            // Tablet is offering a reverse WiFi server — connect outbound
+            let parts = cmd.replacingOccurrences(of: "wifiserver:", with: "").split(separator: ":")
+            if parts.count == 2, let port = Int(parts[1]) {
+                let host = String(parts[0])
+                print("Tablet offers reverse WiFi: \(host):\(port)")
+                DispatchQueue.global().async { self.connectToTabletWifi(host: host, port: port) }
+            }
+        }
+    }
+
+    /// Connect outbound to tablet's TCP server (reverse WiFi — bypasses Mac firewall/CrowdStrike)
+    private func connectToTabletWifi(host: String, port: Int) {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else { print("WiFi reverse: socket() failed"); return }
+
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = UInt16(port).bigEndian
+        addr.sin_addr.s_addr = inet_addr(host)
+
+        let result = withUnsafePointer(to: &addr) { ptr in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+
+        if result == 0 {
+            print("WiFi reverse connected to tablet \(host):\(port)")
+            DispatchQueue.global().async { handleWifiClient(fd: fd) }
+        } else {
+            print("WiFi reverse connect failed to \(host):\(port)")
+            close(fd)
         }
     }
 
