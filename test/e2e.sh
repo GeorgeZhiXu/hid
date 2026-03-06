@@ -24,6 +24,14 @@ else
     fail "Android APK build"
 fi
 
+info "Building mouse-pos helper..."
+if cd test && swiftc mouse-pos.swift -o mouse-pos 2>/dev/null; then
+    pass "mouse-pos builds"
+else
+    fail "mouse-pos build"
+fi
+cd ..
+
 info "Building Mac screenshot-server..."
 if cd mac && swiftc -framework IOBluetooth -framework Foundation -framework ImageIO \
     screenshot-server.swift -o screenshot-server 2>/dev/null; then
@@ -32,6 +40,7 @@ else
     fail "Mac binary build"
 fi
 cd ..
+
 
 # ---- Step 2: Unit tests ----
 info "Running unit tests..."
@@ -85,6 +94,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Helper: get current Mac mouse cursor position
+get_mouse_pos() {
+    ./test/mouse-pos 2>/dev/null || echo "0,0"
+}
+
 # Wait for BT connection (up to 60s)
 info "Waiting for Bluetooth RFCOMM connection (up to 60s)..."
 BT_CONNECTED=false
@@ -136,6 +150,31 @@ if grep -q "capture:" "$SERVER_LOG" 2>/dev/null; then
     pass "Mac captured: $CAPTURE"
 else
     fail "Mac capture not found in server log"
+fi
+
+# ---- Step 9: Test finger input → Mac cursor moves ----
+info "Testing finger input → Mac mouse cursor..."
+
+# Record mouse position before
+POS_BEFORE=$(get_mouse_pos)
+info "Mouse position before: $POS_BEFORE"
+
+# Simulate finger drag on the drawing area via adb
+# Swipe across the draw pad (below toolbar, ~y=400 to avoid buttons)
+adb shell input swipe 400 400 900 400 500   # horizontal swipe, 500ms
+sleep 1
+adb shell input swipe 600 300 600 700 500   # vertical swipe, 500ms
+sleep 1
+
+# Record mouse position after
+POS_AFTER=$(get_mouse_pos)
+info "Mouse position after: $POS_AFTER"
+
+if [ "$POS_BEFORE" != "$POS_AFTER" ]; then
+    pass "Mac cursor moved: $POS_BEFORE → $POS_AFTER"
+else
+    fail "Mac cursor did not move (HID input not reaching Mac)"
+    info "Check: Is tablet paired as BT HID device? Is pen/mouse mode active?"
 fi
 
 # ---- Results ----
