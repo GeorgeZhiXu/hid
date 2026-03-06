@@ -40,6 +40,15 @@ tap_button() {
     return 1
 }
 
+# Parse --phase argument for selective testing
+RUN_PHASES="${1:-}"  # e.g., "9,10,11" or empty for all
+should_skip() {
+    local phase=$1
+    [ -z "$RUN_PHASES" ] && return 1  # no filter = don't skip
+    echo ",$RUN_PHASES," | grep -q ",$phase," && return 1  # in list = don't skip
+    return 0  # not in list = skip
+}
+
 SERVER_PID=""
 cleanup() {
     [ -n "$SERVER_PID" ] && kill $SERVER_PID 2>/dev/null || true
@@ -54,7 +63,8 @@ echo "  DO NOT touch the Mac mouse during the test"
 echo "============================================"
 echo ""
 
-# ==== PHASE 1: BUILD ====
+# ==== PHASE 1:
+if should_skip 1; then info "Skipping phase 1"; else
 
 info "Building Android APK..."
 if ANDROID_HOME="${ANDROID_HOME:-/opt/homebrew/share/android-commandlinetools}" \
@@ -85,7 +95,10 @@ else
     pass "Mac binary up to date"
 fi
 
-# ==== PHASE 2: UNIT TESTS ====
+# ==== PHASE 2:
+fi  # end phase 1
+
+if should_skip 2; then info "Skipping phase 2"; else
 
 info "Running unit tests..."
 if ANDROID_HOME="${ANDROID_HOME:-/opt/homebrew/share/android-commandlinetools}" \
@@ -95,7 +108,10 @@ else
     fail "Unit tests"
 fi
 
-# ==== PHASE 3: DEVICE CHECK + INSTALL ====
+# ==== PHASE 3:
+fi  # end phase 2
+
+if should_skip 3; then info "Skipping phase 3"; else
 
 info "Checking for connected device..."
 DEVICE_COUNT=$(adb devices 2>/dev/null | grep -c "device$" || true)
@@ -128,7 +144,10 @@ fi
 adb shell am start -n com.hid.tabletpen/.MainActivity 2>/dev/null
 sleep 2
 
-# ==== PHASE 4: HID INPUT TEST ====
+# ==== PHASE 4:
+fi  # end phase 3
+
+if should_skip 4; then info "Skipping phase 4"; else
 # Test finger input moves Mac cursor (tests full HID round-trip)
 
 info "--- HID Input Test ---"
@@ -172,7 +191,10 @@ else
     fail "Single finger tap: cursor moved $POS_TAP_BEFORE → $POS_TAP_AFTER (should be click, not drag)"
 fi
 
-# ==== PHASE 5: START MAC SERVER + BT SCREENSHOT ====
+# ==== PHASE 5:
+fi  # end phase 4
+
+if should_skip 5; then info "Skipping phase 5"; else
 
 info "--- BT Screenshot Test ---"
 info "Starting screenshot server..."
@@ -232,7 +254,10 @@ else
     fail "Mac capture not found in server log"
 fi
 
-# ==== PHASE 6: WIFI SCREENSHOT TEST ====
+# ==== PHASE 6:
+fi  # end phase 5
+
+if should_skip 6; then info "Skipping phase 6"; else
 
 info "--- WiFi Screenshot Test ---"
 # Check if the first screenshot went over WiFi (already proven) or check full logcat
@@ -259,7 +284,10 @@ else
     fail "WiFi not connected (both devices on same network?)"
 fi
 
-# ==== PHASE 7: WIFI STREAM TEST ====
+# ==== PHASE 7:
+fi  # end phase 6
+
+if should_skip 7; then info "Skipping phase 7"; else
 
 info "--- WiFi Stream Test ---"
 if $WIFI_CONNECTED; then
@@ -287,12 +315,24 @@ else
     fail "WiFi not connected — stream test skipped"
 fi
 
-# ==== PHASE 8: EDGE CASES ====
+# ==== PHASE 8:
+fi  # end phase 7
+
+if should_skip 8; then info "Skipping phase 8"; else
 
 info "--- Edge Case: Server killed + screenshot fails gracefully ---"
 # Kill the screenshot server
 kill $SERVER_PID 2>/dev/null || true
 wait $SERVER_PID 2>/dev/null || true
+# Parse --phase argument for selective testing
+RUN_PHASES="${1:-}"  # e.g., "9,10,11" or empty for all
+should_skip() {
+    local phase=$1
+    [ -z "$RUN_PHASES" ] && return 1  # no filter = don't skip
+    echo ",$RUN_PHASES," | grep -q ",$phase," && return 1  # in list = don't skip
+    return 0  # not in list = skip
+}
+
 SERVER_PID=""
 sleep 3
 
@@ -356,7 +396,10 @@ else
 fi
 
 
-# ==== PHASE 9: BLUETOOTH TOGGLE RECONNECT ====
+# ==== PHASE 9:
+fi  # end phase 8
+
+if should_skip 9; then info "Skipping phase 9"; else
 
 info "--- Connection: Bluetooth toggle reconnect ---"
 info "Disabling tablet Bluetooth..."
@@ -414,7 +457,10 @@ else
     fail "BT toggle: RFCOMM did not reconnect within 15s"
 fi
 
-# ==== PHASE 10: APP KILL + RECONNECT ====
+# ==== PHASE 10:
+fi  # end phase 9
+
+if should_skip 10; then info "Skipping phase 10"; else
 
 # Recovery: ensure app is running and HID has time to settle
 adb shell am start -n com.hid.tabletpen/.MainActivity 2>/dev/null
@@ -460,7 +506,10 @@ else
     fail "App kill: RFCOMM did not reconnect within 30s"
 fi
 
-# ==== PHASE 11: SLEEP/WAKE CYCLE ====
+# ==== PHASE 11:
+fi  # end phase 10
+
+if should_skip 11; then info "Skipping phase 11"; else
 
 info "--- Connection: Sleep/wake cycle ---"
 info "Putting tablet to sleep..."
@@ -509,7 +558,10 @@ for attempt in 1 2; do
     fi
 done
 
-# ==== PHASE 12: STRESS TEST — RAPID SCREENSHOTS ====
+# ==== PHASE 12:
+fi  # end phase 11
+
+if should_skip 12; then info "Skipping phase 12"; else
 
 info "--- Stress: Rapid screenshot requests ---"
 adb logcat -c 2>/dev/null
@@ -539,7 +591,10 @@ else
     fail "Stress test: app crashed"
 fi
 
-# ==== PHASE 13: HID LATENCY TEST ====
+# ==== PHASE 13:
+fi  # end phase 12
+
+if should_skip 13; then info "Skipping phase 13"; else
 
 info "--- Latency: HID input response time ---"
 # Measure time between sending adb input and detecting cursor movement
@@ -572,6 +627,8 @@ if $LATENCY_DETECTED; then
 else
     fail "HID latency: cursor never moved"
 fi
+
+fi  # end last phase
 
 # ==== RESULTS ====
 echo ""
