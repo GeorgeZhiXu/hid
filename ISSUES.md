@@ -12,11 +12,10 @@
 
 
 ### WiFi stream fails after single screenshot ("Broken pipe")
-**Status:** Open — investigation in progress
+**Status:** Resolved
 **Symptoms:** After taking a WiFi screenshot, tapping Stream fails with "Broken pipe" or "no frames received". Stream works fine on a fresh WiFi connection (without prior screenshot).
 **Root cause:** The Mac's `handleWifiClient()` keeps the TCP connection open in a command loop after processing "screenshot". Android reuses the same `wifiSocket` for "stream". But the socket state becomes inconsistent — possibly because the Mac's read loop doesn't properly transition between single-shot and streaming modes, or the screenshot response leaves partial data in the buffer.
-**Workaround:** Stream works if started as the FIRST operation on a fresh WiFi connection (e.g., phase 18 in E2E tests works). Single screenshots also work fine independently.
-**Investigation notes:** The `startStream()` flush check passes (socket appears connected), but `streamLoop()` gets "Broken pipe" on first write or read. The Mac server log shows the WiFi client connected and the "stream" command may not reach the Mac's command loop.
+**Fix:** `startStream()` now opens a FRESH TCP connection instead of reusing the screenshot socket. Streaming and screenshots use separate TCP connections, avoiding socket state confusion when switching between request-response and push modes.
 
 ### macOS `openRFCOMMChannelSync` always fails synchronously
 **Status:** Accepted — workaround in place

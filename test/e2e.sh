@@ -312,13 +312,14 @@ if $WIFI_CONNECTED; then
         sleep 8  # WiFi reconnects after stream stop (disconnect + reconnect)
     fi
 
+    adb logcat -c 2>/dev/null
+    sleep 1
     if tap_button "btn_stream" 2>/dev/null; then
         info "Tapped Stream button — starting stream"
-        sleep 5  # let stream establish + WiFi TCP connect + first frames arrive
+        sleep 10  # let fresh TCP connect + stream establish + first frames arrive
 
         # Draw while streaming to generate screen changes
         info "Drawing during stream to verify screen updates..."
-        adb logcat -c 2>/dev/null
         adb shell input swipe 500 500 900 500 300
         sleep 2
         adb shell input swipe 600 400 600 700 300

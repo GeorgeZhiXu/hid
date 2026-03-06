@@ -433,38 +433,47 @@ class BluetoothScreenshot(private val context: Context) {
     // MARK: - Streaming
 
     fun startStream() {
-        val wifi = wifiSocket
-        if (wifi == null || !wifi.isConnected) {
-            mainHandler.post { listener?.onScreenshotError("WiFi not connected") }
-            return
-        }
-        // Verify socket is alive by checking if output stream is writable
-        try {
-            wifi.getOutputStream().flush()
-        } catch (e: Exception) {
-            Log.w(TAG, "WiFi socket stale for streaming: ${e.message}")
-            disconnectWifi()
-            mainHandler.post { listener?.onScreenshotError("WiFi reconnecting... try again") }
-            // Trigger reconnection
-            connectedSocket.get()?.let { tryBothDirections(it) }
+        val host = wifiHost
+        val port = wifiPort
+        if (host == null || port <= 0) {
+            mainHandler.post { listener?.onScreenshotError("WiFi not available") }
             return
         }
         if (streaming.getAndSet(true)) return
-        Thread({ streamLoop(wifi) }, "Stream-WiFi").start()
+        // Open a FRESH TCP connection for streaming (separate from screenshot socket)
+        // This avoids socket state confusion when switching from request-response to push mode
+        Thread({
+            try {
+                Log.i(TAG, "Opening fresh WiFi connection for streaming...")
+                val streamSocket = java.net.Socket()
+                streamSocket.connect(java.net.InetSocketAddress(host, port), WIFI_CONNECT_TIMEOUT)
+                streamSocket.tcpNoDelay = true
+                Log.i(TAG, "Stream WiFi connected to $host:$port")
+                streamLoop(streamSocket)
+                streamSocket.close()
+            } catch (e: Exception) {
+                Log.e(TAG, "Stream WiFi connect failed: ${e.message}")
+                streaming.set(false)
+                mainHandler.post { listener?.onScreenshotError("Stream failed: ${e.message}") }
+            }
+        }, "Stream-WiFi").start()
     }
+
+    // Stream socket is separate from wifiSocket (screenshot socket)
+    @Volatile private var streamSocket: java.net.Socket? = null
 
     fun stopStream() {
         if (!streaming.getAndSet(false)) return
         try {
-            wifiSocket?.getOutputStream()?.write("stop\n".toByteArray())
-            wifiSocket?.getOutputStream()?.flush()
+            streamSocket?.getOutputStream()?.write("stop\n".toByteArray())
+            streamSocket?.getOutputStream()?.flush()
         } catch (_: Exception) {}
-        // Close the stream socket — it's consumed by streamLoop
-        // A fresh WiFi connection will be established on next screenshot or stream start
-        disconnectWifi()
+        try { streamSocket?.close() } catch (_: Exception) {}
+        streamSocket = null
     }
 
-    private fun streamLoop(socket: Socket) {
+    private fun streamLoop(socket: java.net.Socket) {
+        streamSocket = socket
         try {
             val cmd = buildCommand("stream")
             socket.getOutputStream().write(cmd.toByteArray())
@@ -537,6 +546,8 @@ class BluetoothScreenshot(private val context: Context) {
                 streaming.set(false)
                 mainHandler.post { listener?.onScreenshotError("Stream ended: ${e.message}") }
             }
+        } finally {
+            streamSocket = null
         }
     }
 
