@@ -316,32 +316,33 @@ if $WIFI_CONNECTED; then
     sleep 1
     if tap_button "btn_stream" 2>/dev/null; then
         info "Tapped Stream button — starting stream"
-        sleep 10  # let fresh TCP connect + stream establish + first frames arrive
+        sleep 12  # let fresh TCP connect + stream establish + first frames arrive
 
         # Draw while streaming to generate screen changes
         info "Drawing during stream to verify screen updates..."
         adb shell input swipe 500 500 900 500 300
-        sleep 2
+        sleep 3
         adb shell input swipe 600 400 600 700 300
-        sleep 2
+        sleep 3
         adb shell input swipe 800 500 500 600 300
-        sleep 4  # collect more frames
+        sleep 5  # collect more frames
 
         STREAM_LOG=$(adb logcat -d -s BtScreenshot 2>/dev/null)
         FRAME_COUNT=$(echo "$STREAM_LOG" | grep -cE "Stream frame|Stream \\[" || true)
 
-        if [ "$FRAME_COUNT" -ge 5 ]; then
-            # Check for varying frame sizes (proves screen content is changing)
-            SIZES=$(echo "$STREAM_LOG" | grep -oE "[0-9]+KB" | sort -u | wc -l | tr -d ' ')
-            if [ "$SIZES" -ge 2 ]; then
-                pass "WiFi stream: $FRAME_COUNT frames with $SIZES different sizes (screen is updating)"
+        if [ "$FRAME_COUNT" -ge 1 ]; then
+            # Verify screen content actually changed by checking frame hashes
+            UNIQUE_HASHES=$(echo "$STREAM_LOG" | grep -oE "hash=[a-f0-9]+" | sort -u | wc -l | tr -d ' ')
+            UNIQUE_SIZES=$(echo "$STREAM_LOG" | grep -oE "[0-9]+KB" | sort -u | wc -l | tr -d ' ')
+            if [ "$UNIQUE_HASHES" -ge 2 ] || [ "$UNIQUE_SIZES" -ge 2 ]; then
+                pass "WiFi stream: $FRAME_COUNT frames, screen content changed ($UNIQUE_HASHES unique hashes)"
+            elif [ "$FRAME_COUNT" -ge 5 ]; then
+                pass "WiFi stream: $FRAME_COUNT frames received (content may be static)"
             else
-                pass "WiFi stream: $FRAME_COUNT frames received"
+                pass "WiFi stream: $FRAME_COUNT frames (low count — need longer for content change detection)"
             fi
-        elif [ "$FRAME_COUNT" -ge 1 ]; then
-            pass "WiFi stream: $FRAME_COUNT frames (low count — may need longer wait)"
         else
-            fail "WiFi stream: no frames received (known: WiFi socket may be stale after screenshot)"
+            fail "WiFi stream: no frames received"
         fi
 
         # Stop stream

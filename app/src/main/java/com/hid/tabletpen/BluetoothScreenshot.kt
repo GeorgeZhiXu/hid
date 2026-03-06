@@ -501,7 +501,15 @@ class BluetoothScreenshot(private val context: Context) {
                         val elapsed = (t2 - startTime) / 1000.0
                         val fps = if (elapsed > 0) frameCount / elapsed else 0.0
                         val label = if (type == 0x02) "key" else "full"
-                        Log.d(TAG, "Stream [$label] #$frameCount ${frame.size/1024}KB recv:${t1-t0}ms decode:${t2-t1}ms fps:${"%.1f".format(fps)}")
+                        // Sample 4 pixels for content change detection (used by E2E tests)
+                        val hash = if (bitmap.width > 10 && bitmap.height > 10) {
+                            val p1 = bitmap.getPixel(bitmap.width / 4, bitmap.height / 4)
+                            val p2 = bitmap.getPixel(bitmap.width * 3 / 4, bitmap.height / 4)
+                            val p3 = bitmap.getPixel(bitmap.width / 4, bitmap.height * 3 / 4)
+                            val p4 = bitmap.getPixel(bitmap.width * 3 / 4, bitmap.height * 3 / 4)
+                            "%08x%08x%08x%08x".format(p1, p2, p3, p4)
+                        } else "none"
+                        Log.d(TAG, "Stream [$label] #$frameCount ${frame.size/1024}KB recv:${t1-t0}ms decode:${t2-t1}ms fps:${"%.1f".format(fps)} hash=$hash")
                         mainHandler.post { listener?.onStreamFrame(bitmap) }
                     }
                     0x01 -> {
@@ -532,7 +540,7 @@ class BluetoothScreenshot(private val context: Context) {
                         frameCount++
                         val elapsed = (t2 - startTime) / 1000.0
                         val fps = if (elapsed > 0) frameCount / elapsed else 0.0
-                        Log.d(TAG, "Stream [delta] #$frameCount ${tileCount} tiles ${totalSize/1024}KB recv:${t1-t0}ms parse:${t2-t1}ms fps:${"%.1f".format(fps)}")
+                        Log.d(TAG, "Stream [delta] #$frameCount ${tileCount} tiles ${totalSize/1024}KB recv:${t1-t0}ms parse:${t2-t1}ms fps:${"%.1f".format(fps)} tiles_changed=$tileCount")
                         mainHandler.post { listener?.onDeltaFrame(tiles) }
                     }
                     else -> {

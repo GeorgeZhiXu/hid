@@ -586,6 +586,10 @@ func streamLoop(fd: Int32, params: CaptureParams = CaptureParams()) {
         // Try delta compression for streaming (SCK path only)
         var sent = false
 
+        // Force legacy path for streaming (SCK delta path stalls after 1 frame)
+        // SCK works great for single screenshots but needs more work for continuous streaming
+        let useScKForStream = false
+        if useScKForStream {
         #if canImport(ScreenCaptureKit)
         if #available(macOS 12.3, *) {
             if let capture = sckCapture as? SCKCapture,
@@ -601,6 +605,13 @@ func streamLoop(fd: Int32, params: CaptureParams = CaptureParams()) {
                         if let frame = encodeJPEG(image, quality: params.quality, maxDim: params.maxDim) {
                             if !writeTypedFrame(type: 0x02, frame.data, to: fd) { break }
                             print("  [key] \(frame.data.count/1024)KB")
+                            streamFramesSinceKey = 0
+                            sent = true
+                        }
+                    } else if capture.previousFrame == nil {
+                        // No previous frame for delta — send key frame instead
+                        if let frame = encodeJPEG(image, quality: params.quality, maxDim: params.maxDim) {
+                            if !writeTypedFrame(type: 0x02, frame.data, to: fd) { break }
                             streamFramesSinceKey = 0
                             sent = true
                         }
@@ -637,8 +648,9 @@ func streamLoop(fd: Int32, params: CaptureParams = CaptureParams()) {
         }
         #endif
 
+        } // useScKForStream
         if !sent {
-            // Fallback: full frame (legacy path or SCK not available)
+            // Full frame via legacy path
             guard let frame = captureScreen(quality: params.quality, maxDim: params.maxDim, region: params.region) else {
                 usleep(100_000)
                 fcntl(fd, F_SETFL, flags | O_NONBLOCK)
