@@ -17,7 +17,10 @@ Follow these 5 phases for every task:
 ### Phase 1: Requirement Analysis
 - Clarify the user's goal and constraints
 - Ask questions if the scope is ambiguous
+- **Review ROADMAP.md** — check if the request relates to any planned features
+- Look for organically related roadmap items that can be designed and implemented together (e.g., adaptive quality + focused screenshot are natural companions)
 - Identify which components are affected (Android app, Mac server, both)
+- Check ISSUES.md for any known issues related to the change
 
 ### Phase 2: Design & Planning
 - Use `EnterPlanMode` for non-trivial changes
@@ -25,11 +28,15 @@ Follow these 5 phases for every task:
 - Consider edge cases: sleep/wake, reconnection, different networks
 - Get user approval before implementing
 
-### Phase 3: Implementation
+### Phase 3: Implementation & Documentation
 - Read existing code before modifying
 - Keep changes minimal — don't refactor unrelated code
 - Extract pure functions to `PenMath.kt` for testability
-- Update docs (README.md) if user-facing behavior changes
+- **Update documentation** for every user-facing change:
+  - `README.md` — user-facing features, settings, connection flow
+  - `CHANGELOG.md` — add entry under current version
+  - `ISSUES.md` — add new issues discovered, update resolved ones
+  - `ROADMAP.md` — mark implemented items, add new ideas that emerge
 
 ### Phase 4: Testing
 - Run unit tests: `./gradlew test`
@@ -38,6 +45,7 @@ Follow these 5 phases for every task:
 - Verify the specific fix manually if E2E doesn't cover it
 
 ### Phase 5: Commit, Push & Publish
+- Verify all docs are updated (README, CHANGELOG, ISSUES, ROADMAP)
 - Commit with descriptive message explaining WHY, not just WHAT
 - Push to main branch
 - Update GitHub release if APK or Mac binary changed:
@@ -45,6 +53,13 @@ Follow these 5 phases for every task:
   gh release delete v0.X.0 --yes
   gh release create v0.X.0 app/build/outputs/apk/debug/app-debug.apk mac/screenshot-server#screenshot-server-macos-arm64
   ```
+
+## Project Documentation
+- `README.md` — User-facing guide: features, setup, connection flow, settings
+- `CHANGELOG.md` — All changes by version, newest first
+- `ISSUES.md` — Known issues (open + resolved) with root causes and workarounds
+- `ROADMAP.md` — Future ideas organized by near/mid/long-term + infrastructure
+- `CLAUDE.md` — This file: dev process, build commands, technical details
 
 ## Build Commands
 
