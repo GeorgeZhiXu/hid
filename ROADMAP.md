@@ -47,7 +47,20 @@ Replace `screencapture` subprocess with macOS ScreenCaptureKit for lower-latency
 - Per-window capture possible (not just full screen)
 
 ### Delta screenshot compression
-Only send pixels that changed since the last screenshot. Reduces transfer size dramatically for apps where only a small region changes.
+Only send pixels that changed since the last screenshot. With ScreenCaptureKit frames in memory, pixel-level diffing between consecutive frames is straightforward. For drawing apps where only a small brush area changes per stroke, delta frames could be **1-5KB instead of 70KB** — enabling near-real-time feedback.
+
+Implementation approach:
+- Keep previous frame in memory
+- Diff against new frame: find changed rectangles
+- Send only changed regions as small JPEG tiles
+- Client composites tiles onto the previous frame
+- Similar to VNC's Tight encoding but simpler (JPEG tiles only)
+
+### Local cursor prediction
+Render the pen/mouse cursor locally on the tablet with zero latency, before the Mac screen update arrives. The actual pixel data follows behind but the user sees immediate cursor response. This is VNC's key trick for perceived responsiveness.
+
+### WebP encoding
+Replace JPEG with WebP for 30% smaller files at same visual quality, or same size at better quality. Both Android and macOS support WebP natively.
 
 ### Multi-monitor support
 Let user select which Mac screen to capture. Currently captures the main display only.
