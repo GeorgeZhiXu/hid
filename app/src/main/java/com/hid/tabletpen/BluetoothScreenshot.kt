@@ -333,7 +333,11 @@ class BluetoothScreenshot(private val context: Context) {
                 mainHandler.post { listener?.onScreenshotReceived(bitmap) }
             } catch (e: Exception) {
                 Log.e(TAG, "BT screenshot failed", e)
-                mainHandler.post { listener?.onScreenshotError(e.message ?: "Unknown error") }
+                // Socket is dead (broken pipe after sleep) — close it so
+                // the server loop detects disconnect and accepts a new connection
+                try { socket.close() } catch (_: Exception) {}
+                connectedSocket.set(null)
+                mainHandler.post { listener?.onScreenshotError(e.message ?: "BT error") }
             }
         }
     }
