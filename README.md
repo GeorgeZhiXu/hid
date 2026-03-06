@@ -91,34 +91,60 @@ adb install app-debug.apk
 ```
 Or transfer the APK to the tablet and open it.
 
-### 2. Pair with Laptop
+### 2. Connect to Laptop
 
+**Important:** The TabletPen app must be running BEFORE you pair, so the tablet registers as an HID input device.
+
+**First-time pairing:**
 1. Open **TabletPen** on the tablet
 2. Grant Bluetooth permissions when prompted
-3. Tap **Make Discoverable**
-4. On your laptop: **System Settings → Bluetooth → pair** with the tablet
-5. Draw with the stylus — laptop cursor follows
+3. Wait for the **Pair** button to appear (means HID is registered)
+4. Tap **Pair** (makes the tablet discoverable for 5 minutes)
+5. On your laptop: **System Settings → Bluetooth** → the tablet appears → click **Connect**
+6. The laptop now sees the tablet as a pen/mouse input device
+7. The tablet's dropdown shows the laptop name with `[Pen]` or `[Mouse]` tag
+8. Draw with the stylus — laptop cursor follows
 
-The app auto-connects to the last paired laptop on subsequent launches.
+**Subsequent launches:**
+1. Turn on Bluetooth on both devices
+2. Open **TabletPen** — it auto-connects to the last paired laptop
+3. If the laptop doesn't appear in the dropdown, tap **Pair** to re-discover
+
+**Switching between laptops:**
+- The dropdown shows all bonded computers (filtered by Bluetooth device class)
+- Select a different laptop to disconnect from the current one and connect to the new one
+
+**What the dropdown shows:**
+- Only computers and phones (not speakers, headphones, mice, etc.)
+- Currently connected device is marked with `[Pen]` or `[Mouse]`
+- `"No computers paired"` if no eligible devices are bonded
 
 ### 3. Screenshot Feature (Optional)
 
-See your laptop screen on the tablet while drawing. Works entirely over Bluetooth — no WiFi or USB cable needed.
+See your laptop screen on the tablet while drawing.
 
 **On the Mac:**
 ```bash
-# Download from Releases or compile from source
+# Download both from Releases, or compile:
 cd mac && ./build.sh
-
-# Run the screenshot server
 ./screenshot-server
+
+# Or with device filter (faster if you have many BT devices):
+./screenshot-server TabUltra
 ```
-The server auto-discovers the connected tablet and connects via Bluetooth RFCOMM.
+
+The server connects to the tablet via Bluetooth RFCOMM. If both devices are on the same WiFi, it also establishes a fast WiFi link (~376ms vs ~4s over Bluetooth).
 
 **On the tablet:**
-- Tap **Screenshot** to capture and display the laptop screen (~1 second)
-- Tap **Focus** to zoom into a specific area
-- Tap **Reset Focus** to go back to full screen
+- Tap **Screenshot** — captures and displays the laptop screen
+- Tap **Stream** (visible when WiFi connected) — continuous live screen mirroring
+- Tap **Focus** — draw a rectangle to zoom into a screen region
+- Tap **Reset Focus** — go back to full screen
+
+**Connection priority:**
+1. WiFi TCP (fastest, ~100-400ms) — auto-discovered via Bluetooth
+2. Bluetooth RFCOMM (fallback, ~3-8s) — always available
+3. Screenshot and HID always target the same laptop (tied together)
 
 ## Settings
 
