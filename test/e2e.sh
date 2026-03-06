@@ -132,8 +132,12 @@ sleep 2
 # Test finger input moves Mac cursor (tests full HID round-trip)
 
 info "--- HID Input Test ---"
-info "Recording mouse position (DO NOT touch mouse!)..."
+# Reset cursor away from screen edge (previous test may have pushed it to corner)
+info "Resetting cursor position..."
+adb shell input swipe 800 600 400 400 300
 sleep 2
+
+info "Recording mouse position (DO NOT touch mouse!)..."
 POS_BEFORE=$(get_mouse_pos)
 info "Mouse position before: $POS_BEFORE"
 
@@ -317,7 +321,7 @@ if $RECONNECTED; then
 
     # Take a screenshot to verify it works after reconnect
     adb logcat -c 2>/dev/null
-    sleep 2
+    sleep 10
     tap_button "btn_screenshot" 2>/dev/null || adb shell input tap 987 114
     sleep 15
 
