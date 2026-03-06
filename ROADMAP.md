@@ -2,17 +2,17 @@
 
 ## Near-term
 
-### Auto-recapture screenshot after drawing
+### ~~Auto-recapture screenshot after drawing~~ (Implemented v0.6.0)
 After the user finishes a stroke (pen lifts), automatically re-capture the Mac screen after a short delay. This lets the user see the result of their drawing without manually tapping Screenshot.
 **Depends on:** Adaptive screenshot quality (need fast enough capture to not disrupt drawing).
 
 ### Tilt and rotation support
 Samsung S Pen and Boox stylus report tilt data. Add tilt X/Y to the HID descriptor for apps that support it (Photoshop, Krita).
 
-### Eraser tool support
+### ~~Eraser tool support~~ (Implemented v0.6.0)
 Map `TOOL_TYPE_ERASER` to a separate HID report or button combination. Currently eraser is treated the same as pen.
 
-### Stroke thickness based on pressure
+### ~~Stroke thickness based on pressure~~ (Implemented v0.6.0)
 Draw pad visual feedback should show varying stroke width based on pressure, not just a fixed 3px line.
 
 ### ~~Adaptive screenshot quality based on connection speed~~ (Implemented v0.5.0)

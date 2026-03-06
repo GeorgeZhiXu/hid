@@ -779,6 +779,12 @@ class DrawPadView @JvmOverloads constructor(
             canvas.drawRect(activeRect, boundaryPaint)
         }
 
+        // Pressure-based stroke width
+        val minWidth = 1f
+        val maxWidth = 8f
+        strokePaint.strokeWidth = minWidth + currentPressure * (maxWidth - minWidth)
+        strokeShadowPaint.strokeWidth = strokePaint.strokeWidth + 2f
+
         // Draw strokes with dynamic color
         val sc = when (strokeColorSetting) {
             StrokeColor.AUTO -> autoStrokeColor

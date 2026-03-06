@@ -116,11 +116,12 @@ class BluetoothHidManager(private val context: Context) {
         inRange: Boolean,
         x: Int,
         y: Int,
-        pressure: Int
+        pressure: Int,
+        eraser: Boolean = false
     ): Boolean {
         val device = connectedDevice ?: return false
         val hid = hidDevice ?: return false
-        val report = HidDescriptor.buildReport(tipDown, barrel, inRange, x, y, pressure)
+        val report = HidDescriptor.buildReport(tipDown, barrel, inRange, x, y, pressure, eraser)
         return hid.sendReport(device, HidDescriptor.REPORT_ID_DIGITIZER, report)
     }
 

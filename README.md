@@ -35,6 +35,9 @@ The app uses Android's `BluetoothHidDevice` API to register the tablet as a stan
 - **Screenshot over Bluetooth** — captures laptop screen via RFCOMM, no WiFi or USB needed
 - **Adaptive screenshot quality** — auto-adjusts resolution and compression based on connection speed
 - **Focused screenshot** — captures only the focused region for sharper detail and lower latency
+- **Auto-recapture** — automatically re-captures screen after drawing (opt-in)
+- **Pressure-sensitive strokes** — visual feedback varies with pen pressure
+- **Eraser support** — pen eraser tool sends HID eraser events to drawing apps
 - **Auto-connect** — remembers last paired laptop and reconnects on app launch
 - **Settings** — all preferences saved and persisted across sessions
 

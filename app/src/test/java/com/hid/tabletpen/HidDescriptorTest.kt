@@ -151,4 +151,24 @@ class HidDescriptorTest {
     fun `descriptor is non-empty`() {
         assertTrue(HidDescriptor.DESCRIPTOR.size > 50)
     }
+
+    // ---- Eraser support ----
+
+    @Test
+    fun `buildReport eraser sets bit 3`() {
+        val report = HidDescriptor.buildReport(false, false, false, 0, 0, 0, eraser = true)
+        assertEquals(0x08, report[0].toInt() and 0xFF)
+    }
+
+    @Test
+    fun `buildReport eraser combines with tip and inRange`() {
+        val report = HidDescriptor.buildReport(true, false, true, 0, 0, 0, eraser = true)
+        assertEquals(0x0D, report[0].toInt() and 0xFF) // 0x01 | 0x04 | 0x08
+    }
+
+    @Test
+    fun `buildReport default eraser is false`() {
+        val report = HidDescriptor.buildReport(true, true, true, 0, 0, 0)
+        assertEquals(0x07, report[0].toInt() and 0xFF) // no eraser bit
+    }
 }

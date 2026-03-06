@@ -50,6 +50,10 @@ class MainActivity : AppCompatActivity(),
 
     private var hidRegistered = false
 
+    // Auto-recapture: screenshot after pen lifts
+    private var autoRecaptureRunnable: Runnable? = null
+    private val AUTO_RECAPTURE_DELAY = 1000L
+
     // Device selection — populated from live bondedDevices filtered to computers
     private var deviceAddresses = listOf<String>()
     private var deviceNames = linkedMapOf<String, String>() // address → name (for display)
@@ -201,15 +205,40 @@ class MainActivity : AppCompatActivity(),
             HidDescriptor.PRESSURE_MAX
         )
 
+        val isEraser = event.toolType == android.view.MotionEvent.TOOL_TYPE_ERASER
         val sent = hidManager.sendDigitizerReport(
             tipDown = event.tipDown,
             barrel = event.barrel,
             inRange = event.inRange,
-            x = x, y = y, pressure = pressure
+            x = x, y = y, pressure = pressure,
+            eraser = isEraser
         )
         if (event.tipDown) {
-            android.util.Log.d("HidReport", "tip=${ event.tipDown} x=$x y=$y p=$pressure sent=$sent")
+            android.util.Log.d("HidReport", "tip=${event.tipDown} eraser=$isEraser x=$x y=$y p=$pressure sent=$sent")
         }
+
+        // Auto-recapture: schedule screenshot after pen lifts
+        if (settings.autoRecapture) {
+            if (!event.tipDown && !event.inRange) {
+                scheduleAutoRecapture()
+            } else if (event.tipDown) {
+                cancelAutoRecapture()
+            }
+        }
+    }
+
+    private fun scheduleAutoRecapture() {
+        cancelAutoRecapture()
+        if (!btScreenshot.isMacConnected) return
+        autoRecaptureRunnable = Runnable {
+            btScreenshot.requestScreenshot()
+        }
+        uiHandler.postDelayed(autoRecaptureRunnable!!, AUTO_RECAPTURE_DELAY)
+    }
+
+    private fun cancelAutoRecapture() {
+        autoRecaptureRunnable?.let { uiHandler.removeCallbacks(it) }
+        autoRecaptureRunnable = null
     }
 
     // ---- Mouse event → BT HID mouse report ----
@@ -336,6 +365,13 @@ class MainActivity : AppCompatActivity(),
             setSelection(settings.strokeColor.ordinal)
         }
         layout.addView(strokeSpinner)
+
+        // Auto-recapture
+        val recaptureCheck = android.widget.CheckBox(this).apply {
+            text = "Auto-recapture after drawing"
+            isChecked = settings.autoRecapture
+        }
+        layout.addView(recaptureCheck)
 
         // Clear on screenshot
         val clearCheck = android.widget.CheckBox(this).apply {
@@ -473,7 +509,8 @@ class MainActivity : AppCompatActivity(),
                     pinchSensitivity = 5f + pinchSensSeek.progress / 100f * 55f,
                     pinchThreshold = 0.005f + pinchThreshSeek.progress / 100f * 0.045f,
                     cursorStyle = CursorStyle.entries[cursorSpinner.selectedItemPosition],
-                    strokeColor = StrokeColor.entries[strokeSpinner.selectedItemPosition]
+                    strokeColor = StrokeColor.entries[strokeSpinner.selectedItemPosition],
+                    autoRecapture = recaptureCheck.isChecked
                 )
                 AppSettings.save(this, settings)
                 applySettingsToDrawPad()

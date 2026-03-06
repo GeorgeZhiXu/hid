@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.6.0 (2026-03-06)
+
+### Features
+- **Auto-recapture** — automatically re-captures Mac screen 1s after pen lifts (opt-in via Settings)
+- **Pressure-based stroke width** — visual feedback on tablet shows varying thickness based on pen pressure (1-8px)
+- **Eraser tool support** — flip pen to eraser mode, sends HID eraser events to Mac drawing apps
+
 ## v0.5.0 (2026-03-06)
 
 ### Features

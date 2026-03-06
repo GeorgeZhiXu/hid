@@ -4,7 +4,7 @@ package com.hid.tabletpen
  * HID Report Descriptors for digitizer pen and mouse.
  *
  * Report ID 1 — Digitizer (7 bytes):
- *   Byte 0: [0:Tip Switch][1:Barrel Switch][2:In Range][3-7:padding]
+ *   Byte 0: [0:Tip Switch][1:Barrel Switch][2:In Range][3:Eraser][4-7:padding]
  *   Byte 1-2: X (uint16 LE, 0–32767)
  *   Byte 3-4: Y (uint16 LE, 0–32767)
  *   Byte 5-6: Pressure (uint16 LE, 0–4095)
@@ -55,14 +55,15 @@ object HidDescriptor {
         0x09, 0x42,       // Usage (Tip Switch)
         0x09, 0x44,       // Usage (Barrel Switch)
         0x09, 0x32,       // Usage (In Range)
+        0x09, 0x45,       // Usage (Eraser)
         0x15, 0x00,       // Logical Minimum (0)
         0x25, 0x01,       // Logical Maximum (1)
         0x75, 0x01,       // Report Size (1)
-        0x95, 0x03,       // Report Count (3)
+        0x95, 0x04,       // Report Count (4)
         0x81, 0x02,       // Input (Data, Variable, Absolute)
 
-        // --- Padding: 5 bits ---
-        0x75, 0x05,       // Report Size (5)
+        // --- Padding: 4 bits ---
+        0x75, 0x04,       // Report Size (4)
         0x95, 0x01,       // Report Count (1)
         0x81, 0x03,       // Input (Constant)
 
@@ -172,12 +173,14 @@ object HidDescriptor {
         inRange: Boolean,
         x: Int,
         y: Int,
-        pressure: Int
+        pressure: Int,
+        eraser: Boolean = false
     ): ByteArray {
         var buttons = 0
         if (tipDown) buttons = buttons or 0x01
         if (barrel) buttons = buttons or 0x02
         if (inRange) buttons = buttons or 0x04
+        if (eraser) buttons = buttons or 0x08
 
         val cx = x.coerceIn(0, X_MAX)
         val cy = y.coerceIn(0, Y_MAX)
