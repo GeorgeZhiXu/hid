@@ -397,9 +397,9 @@ else
 fi
 
 # Check RFCOMM reconnect — server needs time to re-discover after BT toggle
-info "Waiting for RFCOMM reconnect after BT toggle (up to 30s)..."
+info "Waiting for RFCOMM reconnect after BT toggle (up to 15s)..."
 BT_TOGGLE_OK=false
-for i in $(seq 1 30); do
+for i in $(seq 1 15); do
     # Count connections since the server started (this run)
     RFCOMM_COUNT=$(grep -c "BT connected" "$SERVER_LOG" 2>/dev/null || true)
     if [ "$RFCOMM_COUNT" -ge 2 ]; then
@@ -411,7 +411,7 @@ done
 if $BT_TOGGLE_OK; then
     pass "BT toggle: RFCOMM reconnected"
 else
-    fail "BT toggle: RFCOMM did not reconnect within 30s"
+    fail "BT toggle: RFCOMM did not reconnect within 15s"
 fi
 
 # ==== PHASE 10: APP KILL + RECONNECT ====

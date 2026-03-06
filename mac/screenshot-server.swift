@@ -277,8 +277,8 @@ class ScreenshotServer: NSObject, IOBluetoothRFCOMMChannelDelegate {
         }
 
         if devices.isEmpty {
-            print("No candidates found. Retrying in 5s...")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { self.start() }
+            print("No candidates found. Retrying in 2s...")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { self.start() }
             return
         }
 
@@ -294,8 +294,8 @@ class ScreenshotServer: NSObject, IOBluetoothRFCOMMChannelDelegate {
 
         if index >= devices.count {
             if found.isEmpty {
-                print("No TabletPen devices found. Retrying in 5s...")
-                DispatchQueue.main.asyncAfter(deadline: .now() + 5) { self.start() }
+                print("No TabletPen devices found. Retrying in 2s...")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { self.start() }
             } else {
                 // Sort: put last-connected device first
                 var sorted = found
@@ -344,8 +344,8 @@ class ScreenshotServer: NSObject, IOBluetoothRFCOMMChannelDelegate {
     private func tryConnectList(_ devices: [(IOBluetoothDevice, BluetoothRFCOMMChannelID)], index: Int) {
         if channel != nil { return }
         if index >= devices.count {
-            print("All connection attempts failed. Retrying in 5s...")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { self.start() }
+            print("All connection attempts failed. Retrying in 2s...")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { self.start() }
             return
         }
 
@@ -356,8 +356,10 @@ class ScreenshotServer: NSObject, IOBluetoothRFCOMMChannelDelegate {
         }
     }
 
-    /// Try RFCOMM connection. Sync call often fails but async delegate may succeed.
-    /// Wait up to 15s for async callback before calling fallback.
+    /// Try RFCOMM connection with exponential backoff.
+    /// Sync call often fails but async delegate may succeed.
+    private var connectRetryDelay: Double = 0.5
+
     private func attemptConnect(_ device: IOBluetoothDevice, channel ch: BluetoothRFCOMMChannelID,
                                  fallback: @escaping () -> Void) {
         DispatchQueue.global().async {
@@ -365,13 +367,18 @@ class ScreenshotServer: NSObject, IOBluetoothRFCOMMChannelDelegate {
             let result = device.openRFCOMMChannelSync(&rfcomm, withChannelID: ch, delegate: self)
             if result == kIOReturnSuccess, let rfcomm = rfcomm {
                 self.channel = rfcomm
+                self.connectRetryDelay = 0.5 // reset on success
             } else {
-                print("  Sync open failed (\(result)) — waiting for async callback...")
-                // Wait up to 15s for async delegate to fire
-                DispatchQueue.main.asyncAfter(deadline: .now() + 15) {
+                let wait = self.connectRetryDelay
+                print("  Sync open failed (\(result)) — waiting \(String(format: "%.1f", wait))s for async callback...")
+                DispatchQueue.main.asyncAfter(deadline: .now() + wait) {
                     if self.channel == nil {
-                        print("  No async connection after 15s")
+                        print("  No async connection after \(String(format: "%.1f", wait))s")
+                        // Exponential backoff: 0.5 → 1 → 2 → 4 → 8 → 15 (cap)
+                        self.connectRetryDelay = min(self.connectRetryDelay * 2, 15.0)
                         fallback()
+                    } else {
+                        self.connectRetryDelay = 0.5 // reset on success
                     }
                 }
             }
