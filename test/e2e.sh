@@ -319,19 +319,24 @@ done
 if $RECONNECTED; then
     pass "Server restart: BT RFCOMM reconnected"
 
-    # Take a screenshot to verify it works after reconnect
-    adb logcat -c 2>/dev/null
-    sleep 10
-    tap_button "btn_screenshot" 2>/dev/null || adb shell input tap 987 114
-    sleep 15
+    # Take a screenshot — first attempt may hit stale socket, retry if needed
+    for attempt in 1 2; do
+        adb logcat -c 2>/dev/null
+        sleep 5
+        tap_button "btn_screenshot" 2>/dev/null || adb shell input tap 987 114
+        sleep 10
 
-    RECON_LOG=$(adb logcat -d -s BtScreenshot 2>/dev/null)
-    if echo "$RECON_LOG" | grep -qE "(BT|WiFi) .+KB.*total:"; then
-        TIMING=$(echo "$RECON_LOG" | grep -oE "(BT|WiFi) .+total:[0-9]+ms" | tail -1)
-        pass "Screenshot after reconnect: $TIMING"
-    else
-        fail "Screenshot after reconnect: transfer failed"
-    fi
+        RECON_LOG=$(adb logcat -d -s BtScreenshot 2>/dev/null)
+        if echo "$RECON_LOG" | grep -qE "(BT|WiFi) .+KB.*total:"; then
+            TIMING=$(echo "$RECON_LOG" | grep -oE "(BT|WiFi) .+total:[0-9]+ms" | tail -1)
+            pass "Screenshot after reconnect: $TIMING"
+            break
+        elif [ "$attempt" = "2" ]; then
+            fail "Screenshot after reconnect: transfer failed on both attempts"
+        else
+            info "Attempt 1 hit stale socket, retrying..."
+        fi
+    done
 else
     fail "Server restart: BT RFCOMM did not reconnect within 60s"
 fi
