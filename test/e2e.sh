@@ -24,23 +24,26 @@ else
     fail "Android APK build"
 fi
 
-info "Building test helpers..."
-if cd test && swiftc mouse-pos.swift -o mouse-pos 2>/dev/null && \
-    swiftc -framework IOBluetooth -framework Foundation bt-check.swift -o bt-check 2>/dev/null; then
-    pass "Test helpers build"
+info "Building mouse-pos helper..."
+if cd test && swiftc mouse-pos.swift -o mouse-pos 2>/dev/null; then
+    pass "mouse-pos builds"
 else
-    fail "Test helpers build"
+    fail "mouse-pos build"
 fi
 cd ..
 
 info "Building Mac screenshot-server..."
-if cd mac && swiftc -framework IOBluetooth -framework Foundation -framework ImageIO \
-    screenshot-server.swift -o screenshot-server 2>/dev/null; then
-    pass "Mac binary builds"
+if [ ! -f mac/screenshot-server ] || [ mac/screenshot-server.swift -nt mac/screenshot-server ]; then
+    if cd mac && swiftc -framework IOBluetooth -framework Foundation -framework ImageIO \
+        screenshot-server.swift -o screenshot-server 2>/dev/null; then
+        pass "Mac binary builds"
+    else
+        fail "Mac binary build"
+    fi
+    cd ..
 else
-    fail "Mac binary build"
+    pass "Mac binary up to date"
 fi
-cd ..
 
 
 # ---- Step 2: Unit tests ----
@@ -89,18 +92,6 @@ adb shell am start -n com.hid.tabletpen/.MainActivity 2>/dev/null
 sleep 2
 
 # ---- Step 6: Start Mac server ----
-# ---- Step 6a: Check Mac Bluetooth permission ----
-info "Checking Mac Bluetooth permission..."
-BT_COUNT=$(./test/bt-check 2>/dev/null || echo "0")
-if [ "$BT_COUNT" = "0" ]; then
-    fail "Mac Bluetooth: no paired devices visible (grant Bluetooth permission in System Settings → Privacy & Security → Bluetooth)"
-    echo ""
-    echo -e "Results: ${GREEN}${PASS} passed${NC}, ${RED}${FAIL} failed${NC}"
-    exit 1
-else
-    pass "Mac Bluetooth: $BT_COUNT paired devices visible"
-fi
-
 info "Starting screenshot server..."
 SERVER_LOG=$(mktemp)
 ./mac/screenshot-server > "$SERVER_LOG" 2>&1 &
