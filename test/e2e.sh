@@ -341,6 +341,203 @@ else
     fail "Server restart: BT RFCOMM did not reconnect within 60s"
 fi
 
+
+# ==== PHASE 9: BLUETOOTH TOGGLE RECONNECT ====
+
+info "--- Connection: Bluetooth toggle reconnect ---"
+info "Disabling tablet Bluetooth..."
+adb shell cmd bluetooth_manager disable 2>/dev/null || adb shell svc bluetooth disable 2>/dev/null
+sleep 5
+
+# Verify HID disconnected
+POS_BT_OFF=$(get_mouse_pos)
+adb shell input swipe 600 500 900 500 300 2>/dev/null
+sleep 2
+POS_BT_OFF2=$(get_mouse_pos)
+if [ "$POS_BT_OFF" = "$POS_BT_OFF2" ]; then
+    pass "BT off: HID disconnected (cursor didn't move)"
+else
+    info "Cursor still moved with BT off — may be residual"
+fi
+
+info "Re-enabling tablet Bluetooth..."
+adb shell cmd bluetooth_manager enable 2>/dev/null || adb shell svc bluetooth enable 2>/dev/null
+sleep 10
+
+# Bring app to foreground (BT toggle may have backgrounded it)
+adb shell am start -n com.hid.tabletpen/.MainActivity 2>/dev/null
+sleep 5
+
+# Verify HID reconnects
+info "Checking HID reconnect after BT toggle..."
+adb shell input swipe 800 600 400 400 300
+sleep 2
+POS_BT_ON=$(get_mouse_pos)
+adb shell input swipe 500 500 1000 500 500
+sleep 2
+POS_BT_ON2=$(get_mouse_pos)
+if [ "$POS_BT_ON" != "$POS_BT_ON2" ]; then
+    pass "BT toggle: HID reconnected — cursor moved $POS_BT_ON → $POS_BT_ON2"
+else
+    fail "BT toggle: HID did not reconnect after BT re-enable"
+fi
+
+# Check RFCOMM reconnect (server should have reconnected)
+sleep 5
+RFCOMM_COUNT=$(grep -c "BT connected" "$SERVER_LOG" 2>/dev/null || true)
+if [ "$RFCOMM_COUNT" -ge 2 ]; then
+    pass "BT toggle: RFCOMM reconnected ($RFCOMM_COUNT connections total)"
+else
+    fail "BT toggle: RFCOMM did not reconnect"
+fi
+
+# ==== PHASE 10: APP KILL + RECONNECT ====
+
+info "--- Connection: App kill + reconnect ---"
+info "Force-stopping TabletPen app..."
+adb shell am force-stop com.hid.tabletpen 2>/dev/null
+sleep 3
+
+info "Relaunching TabletPen..."
+adb shell am start -n com.hid.tabletpen/.MainActivity 2>/dev/null
+sleep 8
+
+# Verify HID reconnects
+adb shell input swipe 800 600 400 400 300
+sleep 2
+POS_KILL1=$(get_mouse_pos)
+adb shell input swipe 500 500 1000 500 500
+sleep 2
+POS_KILL2=$(get_mouse_pos)
+if [ "$POS_KILL1" != "$POS_KILL2" ]; then
+    pass "App kill: HID reconnected — cursor moved $POS_KILL1 → $POS_KILL2"
+else
+    fail "App kill: HID did not reconnect after app relaunch"
+fi
+
+# Verify RFCOMM reconnects (wait for server to detect new connection)
+sleep 10
+NEW_RFCOMM=$(grep -c "BT connected" "$SERVER_LOG" 2>/dev/null || true)
+if [ "$NEW_RFCOMM" -ge 3 ]; then
+    pass "App kill: RFCOMM reconnected ($NEW_RFCOMM connections total)"
+else
+    info "RFCOMM connections: $NEW_RFCOMM (may need more time)"
+    fail "App kill: RFCOMM did not reconnect"
+fi
+
+# ==== PHASE 11: SLEEP/WAKE CYCLE ====
+
+info "--- Connection: Sleep/wake cycle ---"
+info "Putting tablet to sleep..."
+adb shell input keyevent POWER
+sleep 8
+
+info "Waking tablet..."
+adb shell input keyevent POWER
+sleep 3
+# Unlock screen (swipe up) - may not be needed if no lock screen
+adb shell input swipe 500 1500 500 500 300
+sleep 5
+# Bring app to foreground
+adb shell am start -n com.hid.tabletpen/.MainActivity 2>/dev/null
+sleep 8
+
+# Verify HID reconnects after wake
+adb shell input swipe 800 600 400 400 300
+sleep 2
+POS_WAKE1=$(get_mouse_pos)
+adb shell input swipe 500 500 1000 500 500
+sleep 2
+POS_WAKE2=$(get_mouse_pos)
+if [ "$POS_WAKE1" != "$POS_WAKE2" ]; then
+    pass "Sleep/wake: HID reconnected — cursor moved $POS_WAKE1 → $POS_WAKE2"
+else
+    fail "Sleep/wake: HID did not reconnect after wake"
+fi
+
+# Verify screenshot works after wake
+adb logcat -c 2>/dev/null
+sleep 2
+for attempt in 1 2; do
+    tap_button "btn_screenshot" 2>/dev/null || adb shell input tap 987 114
+    sleep 10
+    WAKE_LOG=$(adb logcat -d -s BtScreenshot 2>/dev/null)
+    if echo "$WAKE_LOG" | grep -qE "(BT|WiFi) .+KB.*total:"; then
+        TIMING=$(echo "$WAKE_LOG" | grep -oE "(BT|WiFi) .+total:[0-9]+ms" | tail -1)
+        pass "Sleep/wake: screenshot works — $TIMING"
+        break
+    elif [ "$attempt" = "2" ]; then
+        fail "Sleep/wake: screenshot failed after wake"
+    else
+        adb logcat -c 2>/dev/null
+        sleep 3
+    fi
+done
+
+# ==== PHASE 12: STRESS TEST — RAPID SCREENSHOTS ====
+
+info "--- Stress: Rapid screenshot requests ---"
+adb logcat -c 2>/dev/null
+STRESS_FAILURES=0
+STRESS_TOTAL=5
+for i in $(seq 1 $STRESS_TOTAL); do
+    tap_button "btn_screenshot" 2>/dev/null || adb shell input tap 987 114
+    sleep 3  # minimal wait between requests
+done
+sleep 10  # wait for all to complete
+
+STRESS_LOG=$(adb logcat -d -s BtScreenshot 2>/dev/null)
+STRESS_OK=$(echo "$STRESS_LOG" | grep -cE "(BT|WiFi) .+KB.*total:" || true)
+STRESS_ERR=$(echo "$STRESS_LOG" | grep -c "screenshot failed" || true)
+
+if [ "$STRESS_OK" -ge 3 ]; then
+    pass "Stress test: $STRESS_OK/$STRESS_TOTAL screenshots succeeded, $STRESS_ERR failed"
+else
+    fail "Stress test: only $STRESS_OK/$STRESS_TOTAL screenshots succeeded"
+fi
+
+# Verify app didn't crash
+ACTIVITY_STRESS=$(adb shell "dumpsys activity activities | grep -i tabletpen | head -1" 2>/dev/null || true)
+if echo "$ACTIVITY_STRESS" | grep -qi "tabletpen"; then
+    pass "Stress test: app still running"
+else
+    fail "Stress test: app crashed"
+fi
+
+# ==== PHASE 13: HID LATENCY TEST ====
+
+info "--- Latency: HID input response time ---"
+# Measure time between sending adb input and detecting cursor movement
+# This measures the full pipeline: adb→Android→DrawPadView→BT HID→Mac cursor
+adb shell input swipe 800 600 400 400 300  # reset cursor
+sleep 2
+
+LATENCY_BEFORE=$(get_mouse_pos)
+LATENCY_START=$(python3 -c "import time; print(int(time.time()*1000))")
+adb shell input swipe 500 500 900 500 200  # fast swipe, 200ms
+# Poll for cursor change
+LATENCY_DETECTED=false
+for i in $(seq 1 20); do
+    LATENCY_NOW=$(get_mouse_pos)
+    if [ "$LATENCY_NOW" != "$LATENCY_BEFORE" ]; then
+        LATENCY_END=$(python3 -c "import time; print(int(time.time()*1000))")
+        LATENCY_MS=$((LATENCY_END - LATENCY_START))
+        LATENCY_DETECTED=true
+        break
+    fi
+    sleep 0.1
+done
+
+if $LATENCY_DETECTED; then
+    if [ "$LATENCY_MS" -lt 2000 ]; then
+        pass "HID latency: cursor responded in ${LATENCY_MS}ms"
+    else
+        fail "HID latency: ${LATENCY_MS}ms (>2s, too slow)"
+    fi
+else
+    fail "HID latency: cursor never moved"
+fi
+
 # ==== RESULTS ====
 echo ""
 echo "=============================="
