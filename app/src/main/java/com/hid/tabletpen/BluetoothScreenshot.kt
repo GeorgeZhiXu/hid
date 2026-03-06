@@ -424,6 +424,8 @@ class BluetoothScreenshot(private val context: Context) {
                 Log.e(TAG, "WiFi screenshot failed", e)
                 mainHandler.post { listener?.onScreenshotError(e.message ?: "WiFi error") }
                 disconnectWifi()
+                // Trigger reconnection for next request
+                connectedSocket.get()?.let { tryBothDirections(it) }
             }
         }
     }
@@ -436,6 +438,17 @@ class BluetoothScreenshot(private val context: Context) {
             mainHandler.post { listener?.onScreenshotError("WiFi not connected") }
             return
         }
+        // Verify socket is alive by checking if output stream is writable
+        try {
+            wifi.getOutputStream().flush()
+        } catch (e: Exception) {
+            Log.w(TAG, "WiFi socket stale for streaming: ${e.message}")
+            disconnectWifi()
+            mainHandler.post { listener?.onScreenshotError("WiFi reconnecting... try again") }
+            // Trigger reconnection
+            connectedSocket.get()?.let { tryBothDirections(it) }
+            return
+        }
         if (streaming.getAndSet(true)) return
         Thread({ streamLoop(wifi) }, "Stream-WiFi").start()
     }
@@ -446,9 +459,9 @@ class BluetoothScreenshot(private val context: Context) {
             wifiSocket?.getOutputStream()?.write("stop\n".toByteArray())
             wifiSocket?.getOutputStream()?.flush()
         } catch (_: Exception) {}
+        // Close the stream socket — it's consumed by streamLoop
+        // A fresh WiFi connection will be established on next screenshot or stream start
         disconnectWifi()
-        // Reconnect WiFi for future use
-        connectedSocket.get()?.let { tryBothDirections(it) }
     }
 
     private fun streamLoop(socket: Socket) {

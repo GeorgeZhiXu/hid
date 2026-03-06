@@ -10,6 +10,14 @@
 **Workaround:** Kill and relaunch the TabletPen app after BT toggle.
 **Investigation notes:** Android logs show "BT turning off — closing server socket" and "Screenshot target device" but no "Starting RFCOMM server" after BT re-enable. The server loop's retry mechanism may not be re-entering properly.
 
+
+### WiFi stream fails after single screenshot ("Broken pipe")
+**Status:** Open — investigation in progress
+**Symptoms:** After taking a WiFi screenshot, tapping Stream fails with "Broken pipe" or "no frames received". Stream works fine on a fresh WiFi connection (without prior screenshot).
+**Root cause:** The Mac's `handleWifiClient()` keeps the TCP connection open in a command loop after processing "screenshot". Android reuses the same `wifiSocket` for "stream". But the socket state becomes inconsistent — possibly because the Mac's read loop doesn't properly transition between single-shot and streaming modes, or the screenshot response leaves partial data in the buffer.
+**Workaround:** Stream works if started as the FIRST operation on a fresh WiFi connection (e.g., phase 18 in E2E tests works). Single screenshots also work fine independently.
+**Investigation notes:** The `startStream()` flush check passes (socket appears connected), but `streamLoop()` gets "Broken pipe" on first write or read. The Mac server log shows the WiFi client connected and the "stream" command may not reach the Mac's command loop.
+
 ### macOS `openRFCOMMChannelSync` always fails synchronously
 **Status:** Accepted — workaround in place
 **Symptoms:** Every call to `openRFCOMMChannelSync` returns failure, but the async delegate `rfcommChannelOpenComplete` fires success 1-15s later.
