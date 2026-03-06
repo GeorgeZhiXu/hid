@@ -249,13 +249,15 @@ class BluetoothHidManager(private val context: Context) {
         val hid = hidDevice ?: return
 
         try {
-            val device = bt.getRemoteDevice(address)
-            if (device.bondState == BluetoothDevice.BOND_BONDED) {
-                Log.i(TAG, "Auto-connecting to ${device.name ?: address}")
-                hid.connect(device)
-            } else {
-                Log.d(TAG, "Device $address not bonded, skipping auto-connect")
+            // Verify device is actually in the bonded devices set (not just stale remote object)
+            val bonded = bt.bondedDevices?.any { it.address.equals(address, ignoreCase = true) } ?: false
+            if (!bonded) {
+                Log.d(TAG, "Device $address not in bonded devices, skipping auto-connect")
+                return
             }
+            val device = bt.getRemoteDevice(address)
+            Log.i(TAG, "Auto-connecting to ${device.name ?: address}")
+            hid.connect(device)
         } catch (e: Exception) {
             Log.w(TAG, "Auto-connect failed", e)
         }

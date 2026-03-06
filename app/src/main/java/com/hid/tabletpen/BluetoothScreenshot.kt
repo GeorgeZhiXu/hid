@@ -68,6 +68,14 @@ class BluetoothScreenshot(private val context: Context) {
     // Tablet TCP server (fallback when Mac-as-server is blocked)
     private var tabletServer: ServerSocket? = null
 
+    // Target device — only accept RFCOMM from this address (tied to HID device)
+    @Volatile private var targetDeviceAddress: String? = null
+
+    fun setTargetDevice(address: String?) {
+        targetDeviceAddress = address
+        Log.i(TAG, "Screenshot target device: $address")
+    }
+
     // Streaming
     private val streaming = AtomicBoolean(false)
     val isStreaming: Boolean get() = streaming.get()
@@ -102,9 +110,19 @@ class BluetoothScreenshot(private val context: Context) {
                 while (running.get()) {
                     Log.i(TAG, "Waiting for Mac to connect...")
                     val socket = server.accept()
+                    val remoteAddr = socket.remoteDevice?.address
+                    val remoteName = try { socket.remoteDevice?.name } catch (_: Exception) { null }
+
+                    // Filter: only accept from the HID-targeted device
+                    val target = targetDeviceAddress
+                    if (target != null && remoteAddr != null && !remoteAddr.equals(target, ignoreCase = true)) {
+                        Log.i(TAG, "Rejected RFCOMM from $remoteName ($remoteAddr) — expecting $target")
+                        try { socket.close() } catch (_: Exception) {}
+                        continue
+                    }
 
                     connectedSocket.set(socket)
-                    Log.i(TAG, "Mac connected via BT: ${socket.remoteDevice.name}")
+                    Log.i(TAG, "Mac connected via BT: $remoteName ($remoteAddr)")
 
                     readWifiInfoAndConnect(socket)
 

@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.app.AlertDialog
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothClass
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
@@ -49,9 +50,9 @@ class MainActivity : AppCompatActivity(),
 
     private var hidRegistered = false
 
-    // Device selection
-    private var knownDevices = linkedMapOf<String, String>() // address → name
-    private var deviceAddresses = listOf<String>() // ordered list for spinner index mapping
+    // Device selection — populated from live bondedDevices filtered to computers
+    private var deviceAddresses = listOf<String>()
+    private var deviceNames = linkedMapOf<String, String>() // address → name (for display)
     private var suppressSpinnerEvent = false
 
     // Animated dots for loading states
@@ -85,11 +86,8 @@ class MainActivity : AppCompatActivity(),
 
         hidManager = BluetoothHidManager(this)
         hidManager.listener = this
-        hidManager.setAutoConnectDevice(AppSettings.loadLastDevice(this))
 
-        // Device selector — seed from bonded devices if known list is empty
-        knownDevices = AppSettings.loadKnownDevices(this)
-        seedKnownDevicesFromBonded()
+        // Device selector — populated from bonded computer devices
         refreshDeviceSpinner()
         deviceSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, pos: Int, id: Long) {
@@ -97,17 +95,9 @@ class MainActivity : AppCompatActivity(),
                 if (pos >= deviceAddresses.size) return
                 val address = deviceAddresses[pos]
                 if (address == hidManager.connectedDeviceAddress) return
-                // Switch to selected device
-                AppSettings.saveLastDevice(this@MainActivity, address)
-                hidManager.setAutoConnectDevice(address)
-                hidManager.disconnect()
-                hidManager.connectTo(address)
+                connectToDevice(address)
             }
             override fun onNothingSelected(parent: AdapterView<*>?) {}
-        }
-        deviceSpinner.setOnLongClickListener {
-            showDeviceManageDialog()
-            true
         }
 
         btScreenshot = BluetoothScreenshot(this)
@@ -158,6 +148,12 @@ class MainActivity : AppCompatActivity(),
 
         if (checkPermissions()) {
             hidManager.start()
+            // Auto-connect last device if it's still bonded
+            val lastAddr = AppSettings.loadLastDevice(this)
+            if (lastAddr != null && lastAddr in deviceNames) {
+                hidManager.setAutoConnectDevice(lastAddr)
+                btScreenshot.setTargetDevice(lastAddr)
+            }
         } else {
             requestPermissions()
         }
@@ -165,7 +161,7 @@ class MainActivity : AppCompatActivity(),
 
     override fun onResume() {
         super.onResume()
-        // Reconnect HID if lost during sleep
+        refreshDeviceSpinner()
         if (checkPermissions()) {
             hidManager.ensureConnected()
         }
@@ -560,12 +556,11 @@ class MainActivity : AppCompatActivity(),
     @SuppressLint("MissingPermission")
     override fun onDeviceConnected(device: BluetoothDevice) {
         val address = device.address
-        val name = try { device.name } catch (_: Exception) { null } ?: "Unknown"
         runOnUiThread {
             AppSettings.saveLastDevice(this, address)
-            AppSettings.saveKnownDevice(this, address, name)
             hidManager.setAutoConnectDevice(address)
-            knownDevices[address] = name
+            // Tie screenshot RFCOMM + WiFi to the same host
+            btScreenshot.setTargetDevice(address)
             refreshDeviceSpinner()
             updateUI()
         }
@@ -584,55 +579,52 @@ class MainActivity : AppCompatActivity(),
 
     // ---- Device management ----
 
+    /** Get bonded devices that are eligible HID hosts (computers, phones, uncategorized) */
     @SuppressLint("MissingPermission")
-    private fun seedKnownDevicesFromBonded() {
-        // On upgrade from old version, known_devices is empty but last_device may exist.
-        // Also seed from Bluetooth bonded devices so the spinner is pre-populated.
-        val lastAddr = AppSettings.loadLastDevice(this)
+    private fun getEligibleDevices(): LinkedHashMap<String, String> {
+        val result = linkedMapOf<String, String>()
         val adapter = (getSystemService(BLUETOOTH_SERVICE) as? android.bluetooth.BluetoothManager)?.adapter
-            ?: return
+            ?: return result
         try {
             for (device in adapter.bondedDevices) {
-                val addr = device.address
-                if (addr !in knownDevices) {
-                    // Only add if it was our last device (we know it's relevant)
-                    if (addr == lastAddr) {
-                        val name = try { device.name } catch (_: Exception) { null } ?: "Unknown"
-                        knownDevices[addr] = name
-                        AppSettings.saveKnownDevice(this, addr, name)
-                    }
+                val major = device.bluetoothClass?.majorDeviceClass ?: 0
+                // Include computers, phones, and uncategorized (some Macs report oddly)
+                if (major == BluetoothClass.Device.Major.COMPUTER ||
+                    major == BluetoothClass.Device.Major.PHONE ||
+                    major == BluetoothClass.Device.Major.UNCATEGORIZED ||
+                    major == BluetoothClass.Device.Major.MISC) {
+                    val name = try { device.name } catch (_: Exception) { null } ?: "Unknown"
+                    result[device.address] = name
                 }
             }
-        } catch (_: SecurityException) {
-            // Permission not yet granted
-        }
+        } catch (_: SecurityException) {}
+        return result
     }
 
     @SuppressLint("MissingPermission")
     private fun refreshDeviceSpinner() {
-        // Defensive: ensure connected device is always in known devices
+        deviceNames = getEligibleDevices()
+
+        // Always include the currently connected device even if class doesn't match
         val connectedAddr = hidManager.connectedDeviceAddress
         val connectedName = hidManager.connectedDeviceName
-        if (connectedAddr != null && connectedAddr !in knownDevices) {
-            val name = connectedName ?: "Unknown"
-            knownDevices[connectedAddr] = name
-            AppSettings.saveKnownDevice(this, connectedAddr, name)
+        if (connectedAddr != null && connectedAddr !in deviceNames) {
+            deviceNames[connectedAddr] = connectedName ?: "Unknown"
         }
 
-        deviceAddresses = knownDevices.keys.toList()
+        deviceAddresses = deviceNames.keys.toList()
         val modeName = if (settings.inputMode == InputMode.DIGITIZER) "Pen" else "Mouse"
 
         val labels = deviceAddresses.map { addr ->
-            val name = knownDevices[addr] ?: "Unknown"
+            val name = deviceNames[addr] ?: "Unknown"
             if (addr == connectedAddr) "$name [$modeName]" else name
-        }.ifEmpty { listOf("No devices paired") }
+        }.ifEmpty { listOf("No computers paired") }
 
         suppressSpinnerEvent = true
         deviceSpinner.adapter = ArrayAdapter(
             this, android.R.layout.simple_spinner_dropdown_item, labels
         )
 
-        // Select the currently connected or last-used device
         val target = connectedAddr ?: AppSettings.loadLastDevice(this)
         val idx = deviceAddresses.indexOf(target)
         if (idx >= 0) {
@@ -640,34 +632,14 @@ class MainActivity : AppCompatActivity(),
         }
     }
 
+    /** Unified connect: HID + Screenshot target the same device */
     @SuppressLint("MissingPermission")
-    private fun showDeviceManageDialog() {
-        if (knownDevices.isEmpty()) return
-        val entries = knownDevices.entries.toList()
-        val names = entries.map { "${it.value} (${it.key})" }.toTypedArray()
-
-        AlertDialog.Builder(this)
-            .setTitle("Forget a device")
-            .setItems(names) { _, which ->
-                val address = entries[which].key
-                val name = entries[which].value
-                AlertDialog.Builder(this)
-                    .setMessage("Forget \"$name\"?")
-                    .setPositiveButton("Forget") { _, _ ->
-                        AppSettings.removeKnownDevice(this, address)
-                        knownDevices.remove(address)
-                        if (AppSettings.loadLastDevice(this) == address) {
-                            val next = knownDevices.keys.firstOrNull()
-                            AppSettings.saveLastDevice(this, next)
-                            hidManager.setAutoConnectDevice(next)
-                        }
-                        refreshDeviceSpinner()
-                    }
-                    .setNegativeButton("Cancel", null)
-                    .show()
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
+    private fun connectToDevice(address: String) {
+        AppSettings.saveLastDevice(this, address)
+        hidManager.setAutoConnectDevice(address)
+        hidManager.disconnect()
+        hidManager.connectTo(address)
+        // Screenshot will be tied to this device in onDeviceConnected callback
     }
 
     // ---- UI ----

@@ -24,11 +24,12 @@ else
     fail "Android APK build"
 fi
 
-info "Building mouse-pos helper..."
-if cd test && swiftc mouse-pos.swift -o mouse-pos 2>/dev/null; then
-    pass "mouse-pos builds"
+info "Building test helpers..."
+if cd test && swiftc mouse-pos.swift -o mouse-pos 2>/dev/null && \
+    swiftc -framework IOBluetooth -framework Foundation bt-check.swift -o bt-check 2>/dev/null; then
+    pass "Test helpers build"
 else
-    fail "mouse-pos build"
+    fail "Test helpers build"
 fi
 cd ..
 
@@ -75,15 +76,31 @@ fi
 # ---- Step 5: Launch app ----
 info "Launching TabletPen app..."
 adb shell am start -n com.hid.tabletpen/.MainActivity 2>/dev/null
-sleep 3
-ACTIVITY=$(adb shell dumpsys activity activities 2>/dev/null | grep "mResumedActivity" || true)
-if echo "$ACTIVITY" | grep -q "tabletpen"; then
+sleep 5
+# Check if the activity exists (may be paused if tablet screen is on different app)
+ACTIVITY=$(adb shell "dumpsys activity activities | grep -i tabletpen | head -1" 2>/dev/null || true)
+if echo "$ACTIVITY" | grep -qi "tabletpen"; then
     pass "App launched"
 else
     fail "App launch"
 fi
+# Bring app to foreground
+adb shell am start -n com.hid.tabletpen/.MainActivity 2>/dev/null
+sleep 2
 
 # ---- Step 6: Start Mac server ----
+# ---- Step 6a: Check Mac Bluetooth permission ----
+info "Checking Mac Bluetooth permission..."
+BT_COUNT=$(./test/bt-check 2>/dev/null || echo "0")
+if [ "$BT_COUNT" = "0" ]; then
+    fail "Mac Bluetooth: no paired devices visible (grant Bluetooth permission in System Settings → Privacy & Security → Bluetooth)"
+    echo ""
+    echo -e "Results: ${GREEN}${PASS} passed${NC}, ${RED}${FAIL} failed${NC}"
+    exit 1
+else
+    pass "Mac Bluetooth: $BT_COUNT paired devices visible"
+fi
+
 info "Starting screenshot server..."
 SERVER_LOG=$(mktemp)
 ./mac/screenshot-server > "$SERVER_LOG" 2>&1 &
