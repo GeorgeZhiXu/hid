@@ -68,6 +68,9 @@ class BluetoothScreenshot(private val context: Context) {
     private val streaming = AtomicBoolean(false)
     val isStreaming: Boolean get() = streaming.get()
 
+    // Guards BT socket reads — prevents WiFi info reader from conflicting with screenshot reads
+    private val btReadBusy = AtomicBoolean(false)
+
     fun startServer() {
         if (running.getAndSet(true)) return
         Thread({ serverLoop() }, "BtScreenshot-Server").start()
@@ -128,12 +131,11 @@ class BluetoothScreenshot(private val context: Context) {
     // MARK: - WiFi Discovery & Connection
 
     private fun readWifiInfo(btSocket: BluetoothSocket) {
-        // Read WiFi info on a timeout thread (blocking read — available() is unreliable on BT)
+        btReadBusy.set(true)
         val readerThread = Thread({
             try {
                 val input = btSocket.inputStream
                 val sb = StringBuilder()
-                // Blocking byte-by-byte read until newline (avoids buffering binary data)
                 while (true) {
                     val b = input.read()
                     if (b == -1 || b == '\n'.code) break
@@ -154,14 +156,16 @@ class BluetoothScreenshot(private val context: Context) {
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to read WiFi info: ${e.message}")
+            } finally {
+                btReadBusy.set(false)
             }
         }, "BT-WifiInfo")
         readerThread.start()
-        // Wait up to 5 seconds for Mac to send WiFi info
         readerThread.join(5000)
-        if (readerThread.isAlive) {
-            Log.w(TAG, "WiFi info read timed out — Mac may not have sent it yet")
-            // Thread will continue in background; if data arrives later it'll still connect
+        if (!readerThread.isAlive) {
+            btReadBusy.set(false) // Thread finished within timeout
+        } else {
+            Log.w(TAG, "WiFi info read still waiting — BT screenshots blocked until it completes")
         }
     }
 
@@ -197,7 +201,11 @@ class BluetoothScreenshot(private val context: Context) {
     fun requestScreenshot() {
         val wifi = wifiSocket
         if (wifi != null && wifi.isConnected) {
+            // WiFi doesn't conflict with BT reader
             Thread({ doRequestWifi(wifi) }, "Screenshot-WiFi").start()
+        } else if (btReadBusy.get()) {
+            // WiFi info reader is still blocking on the BT socket — can't read screenshot response
+            mainHandler.post { listener?.onScreenshotError("Connecting to Mac... try again") }
         } else {
             val bt = connectedSocket.get()
             if (bt == null || !bt.isConnected) {
