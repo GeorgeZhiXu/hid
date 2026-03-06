@@ -24,6 +24,13 @@ Also detect the tablet's screen resolution and match the screenshot dimensions t
 ### Windows support
 The Mac screenshot-server is macOS-only (IOBluetooth, screencapture). Create a Windows equivalent using Win32 Bluetooth APIs and screen capture.
 
+### Focused screenshot — capture only the focus region
+When in focus mode, send the focus rectangle coordinates to the Mac server so it captures only that region of the screen. Benefits:
+- **Smaller data** — 25% focus = ~75% less pixels to capture, encode, and transfer
+- **Higher resolution** — same pixel budget concentrated on a smaller area = sharper detail
+- **Lower latency** — smaller JPEG = faster transfer, especially over BT
+Implementation: Android sends ocus:x,y,w,h\n\ over RFCOMM/WiFi before \screenshot\n\. Mac uses `screencapture -R x,y,w,h` or crops after capture. Streaming would also benefit — only encode the changing region.
+
 ## Mid-term
 
 ### ScreenCaptureKit streaming
