@@ -39,6 +39,16 @@ object HidDescriptor {
     const val KEY_Y: Int = 0x1C
     const val KEY_LBRACKET: Int = 0x2F  // [ (brush smaller in Photoshop)
     const val KEY_RBRACKET: Int = 0x30  // ] (brush larger in Photoshop)
+    const val KEY_S: Int = 0x16       // Save
+    const val KEY_C: Int = 0x06       // Copy
+    const val KEY_V: Int = 0x19       // Paste
+    const val KEY_N: Int = 0x11       // New
+    const val KEY_X: Int = 0x1B       // Cut
+    const val KEY_A: Int = 0x04       // Select All
+    const val KEY_E: Int = 0x08       // Eraser toggle (Krita)
+    const val KEY_B: Int = 0x05       // Brush (Photoshop)
+    const val KEY_SPACE: Int = 0x2C   // Pan canvas
+    const val KEY_TAB: Int = 0x2B     // Toggle UI (Photoshop)
 
     const val X_MAX: Int = 32767
     const val Y_MAX: Int = 32767

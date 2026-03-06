@@ -39,7 +39,8 @@ The app uses Android's `BluetoothHidDevice` API to register the tablet as a stan
 - **Pressure-sensitive strokes** — visual feedback varies with pen pressure
 - **Eraser support** — pen eraser tool sends HID eraser events to drawing apps
 - **Pen tilt** — X/Y tilt data for brush angle in Photoshop, Krita
-- **Keyboard shortcuts** — Undo, Redo, Brush size buttons on tablet toolbar
+- **Customizable shortcuts** — 8 configurable shortcut slots with app presets (Photoshop, Krita)
+- **Radial menu** — long-press for instant shortcut access without looking at toolbar
 - **ScreenCaptureKit** — 22+ FPS streaming on macOS 12.3+ (auto-fallback to screencapture on older macOS)
 - **Ghost stroke prediction** — instant visual feedback while drawing, before Mac confirms
 - **Adaptive FPS** — streaming automatically drops to 1 FPS when screen is static

@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.1.0 (2026-03-06)
+
+### Features
+- **Customizable keyboard shortcuts** — 8 configurable shortcut slots, first 4 shown on toolbar, all 8 in radial menu
+- **Radial menu** — long-press on draw pad to show circular shortcut menu. Drag to select, release to execute. Professional drawing tablet UX.
+- **App presets** — Default, Photoshop, Krita shortcut profiles. Select in Settings.
+- 10 new HID keycodes: Save, Copy, Paste, Cut, Select All, Eraser, Brush, Space, Tab, New
+
 ## v1.0.0 (2026-03-06)
 
 ### Features

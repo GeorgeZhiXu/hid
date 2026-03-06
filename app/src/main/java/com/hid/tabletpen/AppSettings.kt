@@ -3,6 +3,57 @@ package com.hid.tabletpen
 import android.content.Context
 import org.json.JSONObject
 
+data class ShortcutConfig(val name: String, val modifiers: Int, val keycodes: List<Int>) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("name", name)
+        put("mod", modifiers)
+        put("keys", org.json.JSONArray(keycodes))
+    }
+    companion object {
+        fun fromJson(obj: JSONObject): ShortcutConfig {
+            val keys = mutableListOf<Int>()
+            val arr = obj.getJSONArray("keys")
+            for (i in 0 until arr.length()) keys.add(arr.getInt(i))
+            return ShortcutConfig(obj.getString("name"), obj.getInt("mod"), keys)
+        }
+    }
+}
+
+val DEFAULT_SHORTCUTS = listOf(
+    ShortcutConfig("Undo", HidDescriptor.MOD_LEFT_CTRL, listOf(HidDescriptor.KEY_Z)),
+    ShortcutConfig("Redo", HidDescriptor.MOD_LEFT_CTRL or HidDescriptor.MOD_LEFT_SHIFT, listOf(HidDescriptor.KEY_Z)),
+    ShortcutConfig("Brush [-]", 0, listOf(HidDescriptor.KEY_LBRACKET)),
+    ShortcutConfig("Brush [+]", 0, listOf(HidDescriptor.KEY_RBRACKET)),
+    ShortcutConfig("Save", HidDescriptor.MOD_LEFT_CTRL, listOf(HidDescriptor.KEY_S)),
+    ShortcutConfig("Copy", HidDescriptor.MOD_LEFT_CTRL, listOf(HidDescriptor.KEY_C)),
+    ShortcutConfig("Paste", HidDescriptor.MOD_LEFT_CTRL, listOf(HidDescriptor.KEY_V)),
+    ShortcutConfig("New", HidDescriptor.MOD_LEFT_CTRL, listOf(HidDescriptor.KEY_N)),
+)
+
+val SHORTCUT_PRESETS = mapOf(
+    "Default" to DEFAULT_SHORTCUTS,
+    "Photoshop" to listOf(
+        ShortcutConfig("Undo", HidDescriptor.MOD_LEFT_CTRL, listOf(HidDescriptor.KEY_Z)),
+        ShortcutConfig("Redo", HidDescriptor.MOD_LEFT_CTRL or HidDescriptor.MOD_LEFT_SHIFT, listOf(HidDescriptor.KEY_Z)),
+        ShortcutConfig("Brush [-]", 0, listOf(HidDescriptor.KEY_LBRACKET)),
+        ShortcutConfig("Brush [+]", 0, listOf(HidDescriptor.KEY_RBRACKET)),
+        ShortcutConfig("Eraser", 0, listOf(HidDescriptor.KEY_E)),
+        ShortcutConfig("Brush", 0, listOf(HidDescriptor.KEY_B)),
+        ShortcutConfig("Save", HidDescriptor.MOD_LEFT_CTRL, listOf(HidDescriptor.KEY_S)),
+        ShortcutConfig("Tab", 0, listOf(HidDescriptor.KEY_TAB)),
+    ),
+    "Krita" to listOf(
+        ShortcutConfig("Undo", HidDescriptor.MOD_LEFT_CTRL, listOf(HidDescriptor.KEY_Z)),
+        ShortcutConfig("Redo", HidDescriptor.MOD_LEFT_CTRL or HidDescriptor.MOD_LEFT_SHIFT, listOf(HidDescriptor.KEY_Z)),
+        ShortcutConfig("Brush [-]", 0, listOf(HidDescriptor.KEY_LBRACKET)),
+        ShortcutConfig("Brush [+]", 0, listOf(HidDescriptor.KEY_RBRACKET)),
+        ShortcutConfig("Eraser", 0, listOf(HidDescriptor.KEY_E)),
+        ShortcutConfig("Pan", 0, listOf(HidDescriptor.KEY_SPACE)),
+        ShortcutConfig("Save", HidDescriptor.MOD_LEFT_CTRL, listOf(HidDescriptor.KEY_S)),
+        ShortcutConfig("Select All", HidDescriptor.MOD_LEFT_CTRL, listOf(HidDescriptor.KEY_A)),
+    ),
+)
+
 enum class InputMode { DIGITIZER, MOUSE }
 
 enum class OrientationMode { AUTO, PORTRAIT, LANDSCAPE }
@@ -57,7 +108,8 @@ data class AppSettings(
     val cursorStyle: CursorStyle = CursorStyle.CROSSHAIR,
     val strokeColor: StrokeColor = StrokeColor.AUTO,
     val autoRecapture: Boolean = false,
-    val showGhostStroke: Boolean = true
+    val showGhostStroke: Boolean = true,
+    val shortcuts: List<ShortcutConfig> = DEFAULT_SHORTCUTS
 ) {
     companion object {
         private const val PREFS = "tabletpen_settings"
@@ -77,6 +129,7 @@ data class AppSettings(
         private const val KEY_STROKE_COLOR = "stroke_color"
         private const val KEY_AUTO_RECAPTURE = "auto_recapture"
         private const val KEY_GHOST_STROKE = "ghost_stroke"
+        private const val KEY_SHORTCUTS = "shortcuts"
         private const val KEY_LAST_DEVICE = "last_device"
         private const val KEY_KNOWN_DEVICES = "known_devices"
 
@@ -144,7 +197,14 @@ data class AppSettings(
                 cursorStyle = CursorStyle.entries.getOrElse(p.getInt(KEY_CURSOR_STYLE, 1)) { CursorStyle.CROSSHAIR },
                 strokeColor = StrokeColor.entries.getOrElse(p.getInt(KEY_STROKE_COLOR, 0)) { StrokeColor.AUTO },
                 autoRecapture = p.getBoolean(KEY_AUTO_RECAPTURE, false),
-                showGhostStroke = p.getBoolean(KEY_GHOST_STROKE, true)
+                showGhostStroke = p.getBoolean(KEY_GHOST_STROKE, true),
+                shortcuts = try {
+                    val json = p.getString(KEY_SHORTCUTS, null)
+                    if (json != null) {
+                        val arr = org.json.JSONArray(json)
+                        (0 until arr.length()).map { ShortcutConfig.fromJson(arr.getJSONObject(it)) }
+                    } else DEFAULT_SHORTCUTS
+                } catch (_: Exception) { DEFAULT_SHORTCUTS }
             )
         }
 
@@ -166,6 +226,7 @@ data class AppSettings(
                 .putInt(KEY_STROKE_COLOR, s.strokeColor.ordinal)
                 .putBoolean(KEY_AUTO_RECAPTURE, s.autoRecapture)
                 .putBoolean(KEY_GHOST_STROKE, s.showGhostStroke)
+                .putString(KEY_SHORTCUTS, org.json.JSONArray(s.shortcuts.map { it.toJson() }).toString())
                 .apply()
         }
     }

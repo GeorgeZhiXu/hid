@@ -47,10 +47,7 @@ class MainActivity : AppCompatActivity(),
     private lateinit var screenshotBtn: Button
     private lateinit var streamBtn: Button
     private lateinit var focusBtn: Button
-    private lateinit var undoBtn: Button
-    private lateinit var redoBtn: Button
-    private lateinit var brushSmallBtn: Button
-    private lateinit var brushLargeBtn: Button
+    private lateinit var shortcutContainer: android.widget.LinearLayout
 
     private var hidRegistered = false
 
@@ -91,10 +88,7 @@ class MainActivity : AppCompatActivity(),
         screenshotBtn = findViewById(R.id.btn_screenshot)
         streamBtn = findViewById(R.id.btn_stream)
         focusBtn = findViewById(R.id.btn_focus)
-        undoBtn = findViewById(R.id.btn_undo)
-        redoBtn = findViewById(R.id.btn_redo)
-        brushSmallBtn = findViewById(R.id.btn_brush_small)
-        brushLargeBtn = findViewById(R.id.btn_brush_large)
+        shortcutContainer = findViewById(R.id.shortcut_container)
 
         hidManager = BluetoothHidManager(this)
         hidManager.listener = this
@@ -146,6 +140,7 @@ class MainActivity : AppCompatActivity(),
         drawPad.onPenEvent = { event -> handlePenEvent(event) }
         drawPad.onMouseEvent = { event -> handleMouseEvent(event) }
         drawPad.onPinchZoom = { scaleFactor -> handlePinchZoom(scaleFactor) }
+        drawPad.onShortcut = { shortcut -> sendShortcut(shortcut.modifiers, *shortcut.keycodes.toIntArray()) }
 
         discoverableBtn.setOnClickListener { requestDiscoverable() }
         clearBtn.setOnClickListener { drawPad.clearStrokes() }
@@ -153,10 +148,7 @@ class MainActivity : AppCompatActivity(),
         streamBtn.setOnClickListener { onStreamClicked() }
         focusBtn.setOnClickListener { onFocusClicked() }
         settingsBtn.setOnClickListener { showSettingsDialog() }
-        undoBtn.setOnClickListener { sendShortcut(HidDescriptor.MOD_LEFT_CTRL, HidDescriptor.KEY_Z) }
-        redoBtn.setOnClickListener { sendShortcut(HidDescriptor.MOD_LEFT_CTRL or HidDescriptor.MOD_LEFT_SHIFT, HidDescriptor.KEY_Z) }
-        brushSmallBtn.setOnClickListener { sendShortcut(0, HidDescriptor.KEY_LBRACKET) }
-        brushLargeBtn.setOnClickListener { sendShortcut(0, HidDescriptor.KEY_RBRACKET) }
+        setupShortcutButtons()
 
         updateUI()
         applyOrientation()
@@ -203,6 +195,7 @@ class MainActivity : AppCompatActivity(),
         drawPad.cursorStyle = settings.cursorStyle
         drawPad.strokeColorSetting = settings.strokeColor
         drawPad.showGhostStroke = settings.showGhostStroke
+        drawPad.shortcuts = settings.shortcuts
     }
 
     // ---- Pen event → BT HID digitizer report ----
@@ -261,6 +254,22 @@ class MainActivity : AppCompatActivity(),
     }
 
     // ---- Keyboard shortcuts ----
+
+    @android.annotation.SuppressLint("SetTextI18n")
+    private fun setupShortcutButtons() {
+        shortcutContainer.removeAllViews()
+        for (shortcut in settings.shortcuts.take(4)) {
+            val btn = Button(this).apply {
+                text = shortcut.name
+                textSize = 11f
+                layoutParams = android.widget.LinearLayout.LayoutParams(
+                    android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, (36 * resources.displayMetrics.density).toInt()
+                ).apply { marginEnd = (6 * resources.displayMetrics.density).toInt() }
+                setOnClickListener { sendShortcut(shortcut.modifiers, *shortcut.keycodes.toIntArray()) }
+            }
+            shortcutContainer.addView(btn)
+        }
+    }
 
     private fun sendShortcut(modifiers: Int, vararg keycodes: Int) {
         if (!hidManager.isConnected) return
@@ -409,6 +418,15 @@ class MainActivity : AppCompatActivity(),
         }
         layout.addView(ghostCheck)
 
+        // Shortcut preset
+        layout.addView(TextView(this).apply { text = "Shortcut Preset"; setPadding(0, 16, 0, 4) })
+        val presetNames = SHORTCUT_PRESETS.keys.toList()
+        val presetSpinner = Spinner(this).apply {
+            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, presetNames)
+            setSelection(0)
+        }
+        layout.addView(presetSpinner)
+
         // Clear on screenshot
         val clearCheck = android.widget.CheckBox(this).apply {
             text = "Clear strokes on new screenshot"
@@ -547,10 +565,12 @@ class MainActivity : AppCompatActivity(),
                     cursorStyle = CursorStyle.entries[cursorSpinner.selectedItemPosition],
                     strokeColor = StrokeColor.entries[strokeSpinner.selectedItemPosition],
                     autoRecapture = recaptureCheck.isChecked,
-                    showGhostStroke = ghostCheck.isChecked
+                    showGhostStroke = ghostCheck.isChecked,
+                    shortcuts = SHORTCUT_PRESETS[presetNames[presetSpinner.selectedItemPosition]] ?: DEFAULT_SHORTCUTS
                 )
                 AppSettings.save(this, settings)
                 applySettingsToDrawPad()
+                setupShortcutButtons()
                 applyOrientation()
                 updateUI()
             }

@@ -130,9 +130,9 @@ Support multiple languages for the settings UI. Currently English-only.
 - **Smart focus** — auto-detect the active drawing canvas area on the Mac screen and focus on it, instead of requiring manual focus selection.
 
 ### Usability
-- **Customizable shortcut buttons** — let users configure what each toolbar button does (any modifier + keycode combination). Currently hardcoded to Undo/Redo/Brush.
+- ~~**Customizable shortcut buttons**~~ (Implemented v1.1.0) — let users configure what each toolbar button does (any modifier + keycode combination). Currently hardcoded to Undo/Redo/Brush.
 - **Color picker mode** — tap a point on the screenshot to pick the color at that pixel. Send the appropriate shortcut to the drawing app to select that color.
-- **Radial menu** — long-press on the drawing area to show a radial menu with common actions (brush size, color, undo, eraser toggle). Faster than toolbar buttons.
+- ~~**Radial menu**~~ (Implemented v1.1.0) — long-press on the drawing area to show a radial menu with common actions (brush size, color, undo, eraser toggle). Faster than toolbar buttons.
 - **Split screen** — show the Mac screenshot on one half of the tablet and the drawing area on the other half. No need to toggle between drawing and viewing.
 - **Pinch-to-zoom on screenshot** — zoom into the screenshot for detailed reference viewing, independent of the drawing focus area.
 - **Undo on tablet** — maintain a local stroke history. Undo removes the last stroke visually AND sends Ctrl+Z to the Mac. Currently strokes are visual-only on tablet.

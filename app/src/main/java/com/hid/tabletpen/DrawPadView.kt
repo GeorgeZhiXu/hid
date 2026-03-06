@@ -234,6 +234,42 @@ class DrawPadView @JvmOverloads constructor(
     }
     var showGhostStroke: Boolean = true
 
+    // Radial menu
+    var shortcuts: List<ShortcutConfig> = DEFAULT_SHORTCUTS
+    var onShortcut: ((ShortcutConfig) -> Unit)? = null
+    private var radialMenuActive = false
+    private var radialMenuX = 0f
+    private var radialMenuY = 0f
+    private var radialMenuHover = -1
+    private var radialMenuDownX = 0f
+    private var radialMenuDownY = 0f
+    private var radialMenuRunnable: Runnable? = null
+    private val RADIAL_MENU_DELAY = 500L
+    private val RADIAL_MENU_SLOP = 100f  // px squared
+
+    private val radialBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(180, 30, 30, 50)
+        style = Paint.Style.FILL
+    }
+    private val radialSegmentPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(40, 100, 180, 255)
+        style = Paint.Style.FILL
+    }
+    private val radialHighlightPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(120, 100, 180, 255)
+        style = Paint.Style.FILL
+    }
+    private val radialBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(150, 100, 180, 255)
+        style = Paint.Style.STROKE
+        strokeWidth = 2f
+    }
+    private val radialLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        textSize = 28f
+        textAlign = Paint.Align.CENTER
+    }
+
     private val cursorPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.argb(128, 100, 180, 255)
         style = Paint.Style.STROKE
@@ -293,6 +329,7 @@ class DrawPadView @JvmOverloads constructor(
     private var mouseButtonDown = false
     private var longPressTriggered = false
     private var longPressRunnable: Runnable? = null
+    private val handler = Handler(Looper.getMainLooper())
     private val longPressHandler = Handler(Looper.getMainLooper())
     private val LONG_PRESS_TIMEOUT = 400L
     private val LONG_PRESS_MOVE_THRESHOLD = 25f // px squared
@@ -315,6 +352,86 @@ class DrawPadView @JvmOverloads constructor(
 
     private fun recomputeActiveArea() {
         activeRect = PenMath.computeActiveRect(width.toFloat(), height.toFloat(), targetAspectRatio)
+    }
+
+    private fun scheduleRadialMenu(x: Float, y: Float) {
+        cancelRadialMenu()
+        radialMenuDownX = x
+        radialMenuDownY = y
+        radialMenuRunnable = Runnable {
+            radialMenuActive = true
+            radialMenuX = radialMenuDownX
+            radialMenuY = radialMenuDownY
+            radialMenuHover = -1
+            invalidate()
+        }
+        handler.postDelayed(radialMenuRunnable!!, RADIAL_MENU_DELAY)
+    }
+
+    private fun cancelRadialMenu() {
+        radialMenuRunnable?.let { handler.removeCallbacks(it) }
+        radialMenuRunnable = null
+    }
+
+    private fun handleRadialMenuTouch(action: Int, x: Float, y: Float) {
+        when (action) {
+            MotionEvent.ACTION_MOVE -> {
+                val dx = x - radialMenuX
+                val dy = y - radialMenuY
+                val dist = kotlin.math.sqrt(dx * dx + dy * dy)
+                val innerR = 40f * resources.displayMetrics.density
+                if (dist < innerR) {
+                    radialMenuHover = -1  // cancel zone
+                } else {
+                    val angle = Math.toDegrees(kotlin.math.atan2(dy.toDouble(), dx.toDouble())).toFloat()
+                    val normalized = ((angle + 90 + 360) % 360)  // 0 = top
+                    val segCount = shortcuts.size.coerceAtMost(8)
+                    radialMenuHover = ((normalized / (360f / segCount)).toInt()) % segCount
+                }
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                if (radialMenuHover >= 0 && radialMenuHover < shortcuts.size) {
+                    onShortcut?.invoke(shortcuts[radialMenuHover])
+                }
+                radialMenuActive = false
+                radialMenuHover = -1
+            }
+        }
+    }
+
+    private fun drawRadialMenu(canvas: Canvas) {
+        val cx = radialMenuX
+        val cy = radialMenuY
+        val density = resources.displayMetrics.density
+        val radius = 130f * density
+        val innerR = 35f * density
+        val segCount = shortcuts.size.coerceAtMost(8)
+        val sweepAngle = 360f / segCount
+
+        // Dim background
+        canvas.drawColor(Color.argb(100, 0, 0, 0))
+
+        // Draw segments
+        val rect = android.graphics.RectF(cx - radius, cy - radius, cx + radius, cy + radius)
+        for (i in 0 until segCount) {
+            val startAngle = i * sweepAngle - 90f
+            val paint = if (i == radialMenuHover) radialHighlightPaint else radialSegmentPaint
+            canvas.drawArc(rect, startAngle, sweepAngle, true, paint)
+            canvas.drawArc(rect, startAngle, sweepAngle, true, radialBorderPaint)
+
+            // Label
+            val midAngle = Math.toRadians((startAngle + sweepAngle / 2).toDouble())
+            val labelR = radius * 0.65f
+            val lx = cx + (labelR * kotlin.math.cos(midAngle)).toFloat()
+            val ly = cy + (labelR * kotlin.math.sin(midAngle)).toFloat() + 10f
+            canvas.drawText(shortcuts[i].name, lx, ly, radialLabelPaint)
+        }
+
+        // Center cancel
+        canvas.drawCircle(cx, cy, innerR, radialBgPaint)
+        canvas.drawCircle(cx, cy, innerR, radialBorderPaint)
+        val cancelPaint = Paint(radialLabelPaint).apply { textSize = 36f }
+        canvas.drawText("×", cx, cy + 14f, cancelPaint)
     }
 
     fun clearStrokes() {
@@ -394,6 +511,13 @@ class DrawPadView @JvmOverloads constructor(
         currentPressure = pressure
         lastToolType = toolType
 
+        // Radial menu: intercept while active
+        if (radialMenuActive) {
+            handleRadialMenuTouch(action, x, y)
+            invalidate()
+            return
+        }
+
         // Focus selection mode: any touch draws a selection rectangle
         if (focusSelecting) {
             processFocusSelection(action, x, y)
@@ -454,6 +578,8 @@ class DrawPadView @JvmOverloads constructor(
                 penDownX = x
                 penDownY = y
                 penStabilized = false
+                // Schedule radial menu on long press
+                scheduleRadialMenu(x, y)
                 path.moveTo(x, y)
                 lastX = x
                 lastY = y
@@ -471,6 +597,7 @@ class DrawPadView @JvmOverloads constructor(
                         dispatchPen(tipDown = true, barrel = barrel, inRange = true, nx, ny, pressure, toolType, tiltX, tiltY)
                     } else {
                         // Exceeded dead zone: track actual position
+                        cancelRadialMenu()
                         if (!penStabilized) {
                             penStabilized = true
                             // Update path start to actual pen-down position
@@ -503,6 +630,7 @@ class DrawPadView @JvmOverloads constructor(
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 isDown = false
                 penStabilized = false
+                cancelRadialMenu()
                 val nx = ((x - activeRect.left) / activeRect.width()).coerceIn(0f, 1f)
                 val ny = ((y - activeRect.top) / activeRect.height()).coerceIn(0f, 1f)
                 dispatchPen(tipDown = false, barrel = false, inRange = false, nx, ny, 0f, toolType, 0f, 0f)
@@ -875,6 +1003,11 @@ class DrawPadView @JvmOverloads constructor(
             canvas.drawPath(path, strokeShadowPaint)
         }
         canvas.drawPath(path, strokePaint)
+
+        // Radial menu overlay
+        if (radialMenuActive) {
+            drawRadialMenu(canvas)
+        }
 
         // Draw predicted cursor (ghost ahead of actual position)
         if (cursorX >= 0 && cursorY >= 0 && isDown && (velocityX != 0f || velocityY != 0f)) {
