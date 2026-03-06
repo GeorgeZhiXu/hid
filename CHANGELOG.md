@@ -7,6 +7,7 @@
 - **Radial menu** — long-press on draw pad to show circular shortcut menu. Drag to select, release to execute. Professional drawing tablet UX.
 - **App presets** — Default, Photoshop, Krita shortcut profiles. Select in Settings.
 - 10 new HID keycodes: Save, Copy, Paste, Cut, Select All, Eraser, Brush, Space, Tab, New
+- **Whiteboard app presets** — OneNote, Microsoft Whiteboard, Excalidraw, macOS Preview
 
 ## v1.0.0 (2026-03-06)
 

@@ -106,6 +106,39 @@ Track screenshot latency, HID round-trip time, and stream FPS across releases. A
 ### Localization
 Support multiple languages for the settings UI. Currently English-only.
 
+
+
+### Whiteboard app optimization
+Whiteboard apps (Microsoft Whiteboard, OneNote, macOS Preview/Notes, Google Keep, Excalidraw) have different needs than drawing apps:
+
+**Pressure handling:**
+- Most whiteboard apps ignore pressure or have poor pressure support
+- OneNote needs 80%+ pressure floor or strokes are invisible
+- Auto-detect whiteboard apps and set floor=0.9 (vs 0.5 for Photoshop)
+
+**Shortcut presets to add:**
+- **OneNote**: Pen, Highlighter, Eraser, Lasso Select, Insert Space, Undo, Redo, Color picker
+- **Microsoft Whiteboard**: Pen, Highlighter, Eraser, Sticky Note, Text, Undo, Redo, Select
+- **macOS Preview/Notes**: Pen, Text, Shapes, Arrow, Highlight, Crop, Undo, Redo
+- **Excalidraw**: Rectangle (R), Diamond (D), Ellipse (O), Arrow (A), Text (T), Hand (H), Select (V), Undo
+- **Google Keep**: Pen, Highlighter, Eraser, Undo (limited shortcuts available)
+
+**Auto-detection:**
+- Mac server detects foreground app name (NSWorkspace.shared.frontmostApplication)
+- Sends app name to tablet over BT/WiFi: `"app:OneNote\n"`
+- Tablet auto-switches preset + pressure profile
+- Fallback: manual preset selection in Settings
+
+**Pen behavior differences:**
+- Drawing apps: absolute positioning (digitizer mode) preferred
+- Some whiteboard apps: work better with mouse mode (relative) for scrolling/zooming
+- Auto-switch input mode based on detected app
+
+**Touch gestures for whiteboards:**
+- Two-finger pinch/zoom is critical for whiteboards (already supported)
+- Two-finger pan to scroll canvas (already supported via scroll)
+- Palm rejection matters more — whiteboard apps don't have it built-in
+
 ## New Ideas (Brainstorm)
 
 ### Performance
@@ -125,7 +158,7 @@ Support multiple languages for the settings UI. Currently English-only.
 ### Intelligence
 - **Smart screenshot timing** — detect when the Mac screen actually changes (via frame diff) and only send updates then. Saves bandwidth when the screen is static.
 - **Adaptive FPS** — dynamically adjust streaming FPS based on screen change rate. Static screen = 1 FPS, active drawing = 30 FPS. Saves battery on both devices.
-- **Auto-detect drawing app** — Mac server detects which app is in foreground (Photoshop, Krita, OneNote) and auto-configures pressure curve, shortcuts, and eraser behavior.
+- **Auto-detect drawing/whiteboard app** — Mac server detects which app is in foreground (Photoshop, Krita, OneNote) and auto-configures pressure curve, shortcuts, and eraser behavior.
 - **Gesture learning** — track which gestures the user actually uses and surface them more prominently. Hide unused buttons to reduce toolbar clutter.
 - **Smart focus** — auto-detect the active drawing canvas area on the Mac screen and focus on it, instead of requiring manual focus selection.
 

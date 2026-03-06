@@ -52,6 +52,46 @@ val SHORTCUT_PRESETS = mapOf(
         ShortcutConfig("Save", HidDescriptor.MOD_LEFT_CTRL, listOf(HidDescriptor.KEY_S)),
         ShortcutConfig("Select All", HidDescriptor.MOD_LEFT_CTRL, listOf(HidDescriptor.KEY_A)),
     ),
+    "OneNote" to listOf(
+        ShortcutConfig("Undo", HidDescriptor.MOD_LEFT_CTRL, listOf(HidDescriptor.KEY_Z)),
+        ShortcutConfig("Redo", HidDescriptor.MOD_LEFT_CTRL, listOf(HidDescriptor.KEY_Y)),
+        ShortcutConfig("Eraser", 0, listOf(HidDescriptor.KEY_E)),
+        ShortcutConfig("Lasso", HidDescriptor.MOD_LEFT_CTRL or HidDescriptor.MOD_LEFT_SHIFT, listOf(HidDescriptor.KEY_A)),
+        ShortcutConfig("Copy", HidDescriptor.MOD_LEFT_CTRL, listOf(HidDescriptor.KEY_C)),
+        ShortcutConfig("Paste", HidDescriptor.MOD_LEFT_CTRL, listOf(HidDescriptor.KEY_V)),
+        ShortcutConfig("Save", HidDescriptor.MOD_LEFT_CTRL, listOf(HidDescriptor.KEY_S)),
+        ShortcutConfig("New", HidDescriptor.MOD_LEFT_CTRL, listOf(HidDescriptor.KEY_N)),
+    ),
+    "Whiteboard" to listOf(
+        ShortcutConfig("Undo", HidDescriptor.MOD_LEFT_CTRL, listOf(HidDescriptor.KEY_Z)),
+        ShortcutConfig("Redo", HidDescriptor.MOD_LEFT_CTRL, listOf(HidDescriptor.KEY_Y)),
+        ShortcutConfig("Eraser", 0, listOf(HidDescriptor.KEY_E)),
+        ShortcutConfig("Select", 0, listOf(HidDescriptor.KEY_V)),
+        ShortcutConfig("Text", 0, listOf(HidDescriptor.KEY_X)),
+        ShortcutConfig("Copy", HidDescriptor.MOD_LEFT_CTRL, listOf(HidDescriptor.KEY_C)),
+        ShortcutConfig("Paste", HidDescriptor.MOD_LEFT_CTRL, listOf(HidDescriptor.KEY_V)),
+        ShortcutConfig("Save", HidDescriptor.MOD_LEFT_CTRL, listOf(HidDescriptor.KEY_S)),
+    ),
+    "Excalidraw" to listOf(
+        ShortcutConfig("Select", 0, listOf(0x1A)),  // V key = 0x1A (select tool)
+        ShortcutConfig("Rect", 0, listOf(0x15)),     // R key = 0x15
+        ShortcutConfig("Diamond", 0, listOf(0x07)),   // D key = 0x07
+        ShortcutConfig("Ellipse", 0, listOf(0x12)),   // O key = 0x12
+        ShortcutConfig("Arrow", 0, listOf(0x04)),     // A key = 0x04
+        ShortcutConfig("Text", 0, listOf(0x17)),      // T key = 0x17
+        ShortcutConfig("Hand", 0, listOf(0x0B)),      // H key = 0x0B
+        ShortcutConfig("Undo", HidDescriptor.MOD_LEFT_CTRL, listOf(HidDescriptor.KEY_Z)),
+    ),
+    "Preview" to listOf(
+        ShortcutConfig("Undo", HidDescriptor.MOD_LEFT_CTRL, listOf(HidDescriptor.KEY_Z)),
+        ShortcutConfig("Redo", HidDescriptor.MOD_LEFT_CTRL or HidDescriptor.MOD_LEFT_SHIFT, listOf(HidDescriptor.KEY_Z)),
+        ShortcutConfig("Copy", HidDescriptor.MOD_LEFT_CTRL, listOf(HidDescriptor.KEY_C)),
+        ShortcutConfig("Paste", HidDescriptor.MOD_LEFT_CTRL, listOf(HidDescriptor.KEY_V)),
+        ShortcutConfig("Cut", HidDescriptor.MOD_LEFT_CTRL, listOf(HidDescriptor.KEY_X)),
+        ShortcutConfig("Save", HidDescriptor.MOD_LEFT_CTRL, listOf(HidDescriptor.KEY_S)),
+        ShortcutConfig("Select All", HidDescriptor.MOD_LEFT_CTRL, listOf(HidDescriptor.KEY_A)),
+        ShortcutConfig("Delete", 0, listOf(0x2A)),  // Backspace
+    ),
 )
 
 enum class InputMode { DIGITIZER, MOUSE }
