@@ -135,6 +135,9 @@ class MainActivity : AppCompatActivity(),
             override fun onStreamFrame(bitmap: android.graphics.Bitmap) {
                 drawPad.setScreenshot(bitmap)
             }
+            override fun onDeltaFrame(tiles: List<BluetoothScreenshot.DeltaTile>) {
+                drawPad.composeDelta(tiles)
+            }
         }
         btScreenshot.startServer()
 

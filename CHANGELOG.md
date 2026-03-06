@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.0.0 (2026-03-06)
+
+### Features
+- **Delta compression** — streaming sends only changed 64x64 tiles instead of full frames. Typical brush stroke: ~5KB vs 70KB (93% reduction). Makes BT streaming viable at 10+ FPS.
+- Key frames every 30 frames (1s) prevent visual drift
+- Automatic fallback to full frames when >50% of screen changes
+- Protocol extended: type byte prefix (0x00=full, 0x01=delta, 0x02=key)
+
 ## v0.9.0 (2026-03-06)
 
 ### Features

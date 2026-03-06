@@ -43,6 +43,7 @@ The app uses Android's `BluetoothHidDevice` API to register the tablet as a stan
 - **ScreenCaptureKit** — 22+ FPS streaming on macOS 12.3+ (auto-fallback to screencapture on older macOS)
 - **Ghost stroke prediction** — instant visual feedback while drawing, before Mac confirms
 - **Adaptive FPS** — streaming automatically drops to 1 FPS when screen is static
+- **Delta compression** — only sends changed screen tiles during streaming (93% bandwidth reduction for typical drawing)
 - **Auto-connect** — remembers last paired laptop and reconnects on app launch
 - **Settings** — all preferences saved and persisted across sessions
 

@@ -2,6 +2,7 @@ package com.hid.tabletpen
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -93,6 +94,25 @@ class DrawPadView @JvmOverloads constructor(
         if (strokeColorSetting == StrokeColor.AUTO) {
             autoStrokeColor = PenMath.detectContrastColor(backgroundBitmap)
         }
+        invalidate()
+    }
+
+    /** Composite delta tiles onto the existing background bitmap */
+    fun composeDelta(tiles: List<BluetoothScreenshot.DeltaTile>) {
+        val bmp = backgroundBitmap ?: return
+        // Ensure bitmap is mutable for Canvas drawing
+        val mutable = if (bmp.isMutable) bmp else bmp.copy(android.graphics.Bitmap.Config.ARGB_8888, true)
+        val canvas = Canvas(mutable)
+        for (tile in tiles) {
+            val tileBmp = BitmapFactory.decodeByteArray(tile.jpeg, 0, tile.jpeg.size) ?: continue
+            canvas.drawBitmap(tileBmp, null,
+                Rect(tile.x, tile.y, tile.x + tile.w, tile.y + tile.h), null)
+            tileBmp.recycle()
+        }
+        if (!bmp.isMutable) {
+            backgroundBitmap = mutable
+        }
+        ghostPath.reset()
         invalidate()
     }
 

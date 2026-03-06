@@ -35,6 +35,8 @@ import java.util.concurrent.atomic.AtomicReference
 @SuppressLint("MissingPermission")
 class BluetoothScreenshot(private val context: Context) {
 
+    data class DeltaTile(val x: Int, val y: Int, val w: Int, val h: Int, val jpeg: ByteArray)
+
     companion object {
         private const val TAG = "BtScreenshot"
         private val SERVICE_UUID = UUID.fromString("A5D3E9F0-7B1C-4C2E-9F3A-B8C1D2E4F6A7")
@@ -48,6 +50,7 @@ class BluetoothScreenshot(private val context: Context) {
         fun onScreenshotError(message: String)
         fun onWifiStateChanged(connected: Boolean)
         fun onStreamFrame(bitmap: Bitmap)
+        fun onDeltaFrame(tiles: List<DeltaTile>)
     }
 
     var listener: Listener? = null
@@ -460,18 +463,60 @@ class BluetoothScreenshot(private val context: Context) {
 
             while (streaming.get()) {
                 val t0 = System.currentTimeMillis()
-                val frame = readFrame(input)
-                val t1 = System.currentTimeMillis()
-                val bitmap = BitmapFactory.decodeByteArray(frame, 0, frame.size)
-                    ?: continue
-                val t2 = System.currentTimeMillis()
-                frameCount++
 
-                val elapsed = (t2 - startTime) / 1000.0
-                val fps = if (elapsed > 0) frameCount / elapsed else 0.0
-                Log.d(TAG, "Stream frame #$frameCount ${frame.size/1024}KB recv:${t1-t0}ms decode:${t2-t1}ms fps:${"%.1f".format(fps)}")
+                // Read frame type byte
+                val type = input.read()
+                if (type < 0) break
 
-                mainHandler.post { listener?.onStreamFrame(bitmap) }
+                when (type) {
+                    0x00, 0x02 -> {
+                        // Full frame or key frame
+                        val frame = readFrame(input)
+                        val t1 = System.currentTimeMillis()
+                        val bitmap = BitmapFactory.decodeByteArray(frame, 0, frame.size) ?: continue
+                        val t2 = System.currentTimeMillis()
+                        frameCount++
+                        val elapsed = (t2 - startTime) / 1000.0
+                        val fps = if (elapsed > 0) frameCount / elapsed else 0.0
+                        val label = if (type == 0x02) "key" else "full"
+                        Log.d(TAG, "Stream [$label] #$frameCount ${frame.size/1024}KB recv:${t1-t0}ms decode:${t2-t1}ms fps:${"%.1f".format(fps)}")
+                        mainHandler.post { listener?.onStreamFrame(bitmap) }
+                    }
+                    0x01 -> {
+                        // Delta frame
+                        val sizeBytes = readExact(input, 4)
+                        val totalSize = ByteBuffer.wrap(sizeBytes).int
+                        if (totalSize <= 0 || totalSize > 20 * 1024 * 1024) continue
+
+                        val payload = readExact(input, totalSize)
+                        val t1 = System.currentTimeMillis()
+
+                        // Parse delta tiles
+                        val buf = ByteBuffer.wrap(payload)
+                        val tileCount = buf.short.toInt() and 0xFFFF
+                        val tiles = mutableListOf<DeltaTile>()
+                        for (i in 0 until tileCount) {
+                            val tx = buf.short.toInt() and 0xFFFF
+                            val ty = buf.short.toInt() and 0xFFFF
+                            val tw = buf.short.toInt() and 0xFFFF
+                            val th = buf.short.toInt() and 0xFFFF
+                            val jpegSize = buf.int
+                            val jpeg = ByteArray(jpegSize)
+                            buf.get(jpeg)
+                            tiles.add(DeltaTile(tx, ty, tw, th, jpeg))
+                        }
+
+                        val t2 = System.currentTimeMillis()
+                        frameCount++
+                        val elapsed = (t2 - startTime) / 1000.0
+                        val fps = if (elapsed > 0) frameCount / elapsed else 0.0
+                        Log.d(TAG, "Stream [delta] #$frameCount ${tileCount} tiles ${totalSize/1024}KB recv:${t1-t0}ms parse:${t2-t1}ms fps:${"%.1f".format(fps)}")
+                        mainHandler.post { listener?.onDeltaFrame(tiles) }
+                    }
+                    else -> {
+                        Log.w(TAG, "Unknown frame type: $type")
+                    }
+                }
             }
         } catch (e: Exception) {
             if (streaming.get()) {

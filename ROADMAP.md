@@ -46,7 +46,7 @@ Replace `screencapture` subprocess with macOS ScreenCaptureKit for lower-latency
 - ~16ms vs ~150ms capture latency
 - Per-window capture possible (not just full screen)
 
-### Delta screenshot compression
+### ~~Delta screenshot compression~~ (Implemented v1.0.0)
 Only send pixels that changed since the last screenshot. With ScreenCaptureKit frames in memory, pixel-level diffing between consecutive frames is straightforward. For drawing apps where only a small brush area changes per stroke, delta frames could be **1-5KB instead of 70KB** — enabling near-real-time feedback.
 
 Implementation approach:

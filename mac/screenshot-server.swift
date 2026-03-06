@@ -69,6 +69,13 @@ class SCKCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         return buf
     }
 
+    var previousFrame: CVPixelBuffer? {
+        lock.lock()
+        let buf = previousBuffer
+        lock.unlock()
+        return buf
+    }
+
     private var previousBuffer: CVPixelBuffer?
     private var unchangedCount = 0
 
@@ -133,6 +140,121 @@ class SCKCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 }
 #endif
+
+// MARK: - Delta compression: tile diff + selective encode
+
+let TILE_SIZE = 64
+let KEY_FRAME_INTERVAL = 30  // send full frame every 30 frames
+let DELTA_CHANGE_THRESHOLD = 10  // per-channel pixel diff threshold
+
+/// Identify 64x64 tiles that changed between two CVPixelBuffers
+@available(macOS 12.3, *)
+func identifyChangedTiles(_ a: CVPixelBuffer, _ b: CVPixelBuffer) -> [(x: Int, y: Int, w: Int, h: Int)] {
+    let w = CVPixelBufferGetWidth(a)
+    let h = CVPixelBufferGetHeight(a)
+    guard w == CVPixelBufferGetWidth(b), h == CVPixelBufferGetHeight(b) else {
+        return [(x: 0, y: 0, w: w, h: h)]  // size changed = full screen
+    }
+
+    CVPixelBufferLockBaseAddress(a, .readOnly)
+    CVPixelBufferLockBaseAddress(b, .readOnly)
+    defer {
+        CVPixelBufferUnlockBaseAddress(a, .readOnly)
+        CVPixelBufferUnlockBaseAddress(b, .readOnly)
+    }
+
+    guard let ptrA = CVPixelBufferGetBaseAddress(a),
+          let ptrB = CVPixelBufferGetBaseAddress(b) else {
+        return [(x: 0, y: 0, w: w, h: h)]
+    }
+
+    let bytesPerRow = CVPixelBufferGetBytesPerRow(a)
+    var changed: [(x: Int, y: Int, w: Int, h: Int)] = []
+
+    let cols = (w + TILE_SIZE - 1) / TILE_SIZE
+    let rows = (h + TILE_SIZE - 1) / TILE_SIZE
+
+    for row in 0..<rows {
+        for col in 0..<cols {
+            let tx = col * TILE_SIZE
+            let ty = row * TILE_SIZE
+            let tw = min(TILE_SIZE, w - tx)
+            let th = min(TILE_SIZE, h - ty)
+
+            // Sample 4 pixels per tile (corners)
+            var tileChanged = false
+            let samplePoints = [(tx, ty), (tx + tw - 1, ty), (tx, ty + th - 1), (tx + tw - 1, ty + th - 1)]
+            for (sx, sy) in samplePoints {
+                let offset = sy * bytesPerRow + sx * 4
+                for c in 0..<3 {  // B, G, R channels
+                    let va = ptrA.load(fromByteOffset: offset + c, as: UInt8.self)
+                    let vb = ptrB.load(fromByteOffset: offset + c, as: UInt8.self)
+                    if abs(Int(va) - Int(vb)) > DELTA_CHANGE_THRESHOLD {
+                        tileChanged = true
+                        break
+                    }
+                }
+                if tileChanged { break }
+            }
+
+            if tileChanged {
+                changed.append((x: tx, y: ty, w: tw, h: th))
+            }
+        }
+    }
+
+    return changed
+}
+
+/// Encode changed tiles into delta frame payload
+func encodeDeltaPayload(_ tiles: [(x: Int, y: Int, w: Int, h: Int)],
+                         image: CGImage, quality: Int?) -> Data {
+    var payload = Data()
+
+    // Tile count (2 bytes BE)
+    var count = UInt16(tiles.count).bigEndian
+    payload.append(Data(bytes: &count, count: 2))
+
+    for tile in tiles {
+        // Tile header: x, y, w, h (each 2 bytes BE)
+        var tx = UInt16(tile.x).bigEndian
+        var ty = UInt16(tile.y).bigEndian
+        var tw = UInt16(tile.w).bigEndian
+        var th = UInt16(tile.h).bigEndian
+        payload.append(Data(bytes: &tx, count: 2))
+        payload.append(Data(bytes: &ty, count: 2))
+        payload.append(Data(bytes: &tw, count: 2))
+        payload.append(Data(bytes: &th, count: 2))
+
+        // Crop tile from image
+        let rect = CGRect(x: tile.x, y: tile.y, width: tile.w, height: tile.h)
+        let tileImage = image.cropping(to: rect) ?? image
+
+        // Encode tile as JPEG
+        let jpegData = NSMutableData()
+        if let dest = CGImageDestinationCreateWithData(jpegData, "public.jpeg" as CFString, 1, nil) {
+            CGImageDestinationAddImage(dest, tileImage, [
+                kCGImageDestinationLossyCompressionQuality: Double(quality ?? jpegQuality) / 100.0
+            ] as CFDictionary)
+            CGImageDestinationFinalize(dest)
+        }
+
+        // JPEG size (4 bytes BE) + data
+        var jpegSize = UInt32(jpegData.length).bigEndian
+        payload.append(Data(bytes: &jpegSize, count: 4))
+        payload.append(jpegData as Data)
+    }
+
+    return payload
+}
+
+/// Write frame with type byte prefix
+func writeTypedFrame(type: UInt8, _ data: Data, to fd: Int32) -> Bool {
+    var t = type
+    let typeOk = Darwin.write(fd, &t, 1)
+    if typeOk != 1 { return false }
+    return writeFrame(data, to: fd)
+}
 
 // MARK: - Shared JPEG encoding (used by both SCK and legacy paths)
 
@@ -436,7 +558,12 @@ func handleWifiClient(fd: Int32) {
     print("WiFi: client disconnected")
 }
 
+var streamFramesSinceKey = 0
+var streamPreviousCGImage: CGImage? = nil
+
 func streamLoop(fd: Int32, params: CaptureParams = CaptureParams()) {
+    streamFramesSinceKey = 0
+    streamPreviousCGImage = nil
     // Make socket non-blocking to check for "stop" command while streaming
     let flags = fcntl(fd, F_GETFL)
     fcntl(fd, F_SETFL, flags | O_NONBLOCK)
@@ -456,12 +583,69 @@ func streamLoop(fd: Int32, params: CaptureParams = CaptureParams()) {
         // Restore blocking for write
         fcntl(fd, F_SETFL, flags)
 
-        guard let frame = captureScreen(quality: params.quality, maxDim: params.maxDim, region: params.region) else {
-            usleep(100_000) // 100ms retry
-            fcntl(fd, F_SETFL, flags | O_NONBLOCK)
-            continue
+        // Try delta compression for streaming (SCK path only)
+        var sent = false
+
+        #if canImport(ScreenCaptureKit)
+        if #available(macOS 12.3, *) {
+            if let capture = sckCapture as? SCKCapture,
+               let currentBuf = capture.grabFrame() {
+                var cgImage: CGImage?
+                VTCreateCGImageFromCVPixelBuffer(currentBuf, options: nil, imageOut: &cgImage)
+
+                if let image = cgImage {
+                    let needsKey = streamFramesSinceKey >= KEY_FRAME_INTERVAL || streamPreviousCGImage == nil
+
+                    if needsKey {
+                        // Key frame: full JPEG
+                        if let frame = encodeJPEG(image, quality: params.quality, maxDim: params.maxDim) {
+                            if !writeTypedFrame(type: 0x02, frame.data, to: fd) { break }
+                            print("  [key] \(frame.data.count/1024)KB")
+                            streamFramesSinceKey = 0
+                            sent = true
+                        }
+                    } else if let prevImage = streamPreviousCGImage,
+                              let prevBuf = capture.previousFrame {
+                        // Delta frame
+                        let tiles = identifyChangedTiles(currentBuf, prevBuf)
+                        if tiles.isEmpty {
+                            // No change — skip frame
+                            sent = true
+                            fcntl(fd, F_SETFL, flags | O_NONBLOCK)
+                            usleep(10_000)
+                            continue
+                        } else if tiles.count > (image.width / TILE_SIZE + 1) * (image.height / TILE_SIZE + 1) / 2 {
+                            // >50% changed — send key frame
+                            if let frame = encodeJPEG(image, quality: params.quality, maxDim: params.maxDim) {
+                                if !writeTypedFrame(type: 0x02, frame.data, to: fd) { break }
+                                print("  [key-forced] \(frame.data.count/1024)KB (\(tiles.count) tiles changed)")
+                                streamFramesSinceKey = 0
+                                sent = true
+                            }
+                        } else {
+                            // Delta: encode only changed tiles
+                            let payload = encodeDeltaPayload(tiles, image: image, quality: params.quality)
+                            if !writeTypedFrame(type: 0x01, payload, to: fd) { break }
+                            print("  [delta] \(tiles.count) tiles \(payload.count/1024)KB")
+                            streamFramesSinceKey += 1
+                            sent = true
+                        }
+                    }
+                    streamPreviousCGImage = image
+                }
+            }
         }
-        if !writeFrame(frame.data, to: fd) { break }
+        #endif
+
+        if !sent {
+            // Fallback: full frame (legacy path or SCK not available)
+            guard let frame = captureScreen(quality: params.quality, maxDim: params.maxDim, region: params.region) else {
+                usleep(100_000)
+                fcntl(fd, F_SETFL, flags | O_NONBLOCK)
+                continue
+            }
+            if !writeTypedFrame(type: 0x00, frame.data, to: fd) { break }
+        }
 
         // Back to non-blocking for next check
         fcntl(fd, F_SETFL, flags | O_NONBLOCK)
