@@ -270,26 +270,7 @@ class DrawPadView @JvmOverloads constructor(
     }
 
     private fun recomputeActiveArea() {
-        val viewW = width.toFloat()
-        val viewH = height.toFloat()
-        if (viewW <= 0 || viewH <= 0) return
-
-        val viewRatio = viewW / viewH
-        val targetRatio = targetAspectRatio
-
-        val rectW: Float
-        val rectH: Float
-        if (viewRatio > targetRatio) {
-            rectH = viewH
-            rectW = viewH * targetRatio
-        } else {
-            rectW = viewW
-            rectH = viewW / targetRatio
-        }
-
-        val left = (viewW - rectW) / 2f
-        val top = (viewH - rectH) / 2f
-        activeRect.set(left, top, left + rectW, top + rectH)
+        activeRect = PenMath.computeActiveRect(width.toFloat(), height.toFloat(), targetAspectRatio)
     }
 
     fun clearStrokes() {

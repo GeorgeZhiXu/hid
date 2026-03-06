@@ -145,16 +145,12 @@ class BluetoothScreenshot(private val context: Context) {
                 }
                 val line = sb.toString().trim()
                 Log.i(TAG, "Mac sent: '$line'")
-                if (line.startsWith("wifi:")) {
-                    val parts = line.removePrefix("wifi:").split(":")
-                    if (parts.size == 2) {
-                        wifiHost = parts[0]
-                        wifiPort = parts[1].toIntOrNull() ?: 0
-                        if (wifiPort > 0) {
-                            Log.i(TAG, "WiFi info received: $wifiHost:$wifiPort")
-                            tryBothDirections(btSocket)
-                        }
-                    }
+                val wifiInfo = PenMath.parseWifiInfo(line)
+                if (wifiInfo != null) {
+                    wifiHost = wifiInfo.first
+                    wifiPort = wifiInfo.second
+                    Log.i(TAG, "WiFi info received: $wifiHost:$wifiPort")
+                    tryBothDirections(btSocket)
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to read WiFi info: ${e.message}")

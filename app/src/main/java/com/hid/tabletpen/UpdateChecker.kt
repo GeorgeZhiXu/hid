@@ -81,7 +81,7 @@ class UpdateChecker(private val context: Context) {
         }
     }
 
-    private fun isNewer(remote: String, current: String): Boolean {
+    internal fun isNewer(remote: String, current: String): Boolean {
         val r = remote.split(".").map { it.toIntOrNull() ?: 0 }
         val c = current.split(".").map { it.toIntOrNull() ?: 0 }
         for (i in 0 until maxOf(r.size, c.size)) {

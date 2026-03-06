@@ -25,7 +25,6 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import kotlin.math.pow
 
 class MainActivity : AppCompatActivity(),
     BluetoothHidManager.Listener {
@@ -193,31 +192,16 @@ class MainActivity : AppCompatActivity(),
     private fun handlePenEvent(event: DrawPadView.PenEvent) {
         if (!hidManager.isConnected) return
 
-        // Map normalized coords through focus rect if active
-        val fr = drawPad.focusRect
-        val mappedX: Float
-        val mappedY: Float
-        if (fr != null) {
-            // Pen 0-1 maps to just the focus area of the screen
-            mappedX = fr.left + event.normalizedX * fr.width()
-            mappedY = fr.top + event.normalizedY * fr.height()
-        } else {
-            mappedX = event.normalizedX
-            mappedY = event.normalizedY
-        }
-
+        val (mappedX, mappedY) = PenMath.mapThroughFocus(
+            event.normalizedX, event.normalizedY, drawPad.focusRect
+        )
         val x = (mappedX * HidDescriptor.X_MAX).toInt()
         val y = (mappedY * HidDescriptor.Y_MAX).toInt()
-
-        // Floor + curve: floor guarantees minimum pressure when tip is down,
-        // remaining range (1-floor) is scaled by the pressure curve
-        val floor = settings.pressureFloor
-        val curved = event.pressure.toDouble().pow(settings.pressureExponent.toDouble()).toFloat()
-        val pressure = if (event.tipDown) {
-            ((floor + curved * (1f - floor)) * HidDescriptor.PRESSURE_MAX).toInt()
-        } else {
-            0
-        }
+        val pressure = PenMath.calculatePressure(
+            event.tipDown, event.pressure,
+            settings.pressureFloor, settings.pressureExponent,
+            HidDescriptor.PRESSURE_MAX
+        )
 
         val sent = hidManager.sendDigitizerReport(
             tipDown = event.tipDown,
@@ -257,15 +241,9 @@ class MainActivity : AppCompatActivity(),
     }
 
     private fun sendMouseDelta(left: Boolean, right: Boolean, dx: Int, dy: Int) {
-        var rx = dx
-        var ry = dy
-        do {
-            val sx = rx.coerceIn(-127, 127)
-            val sy = ry.coerceIn(-127, 127)
+        for ((sx, sy) in PenMath.chunkMouseDeltas(dx, dy)) {
             hidManager.sendMouseReport(left, right, false, sx, sy)
-            rx -= sx
-            ry -= sy
-        } while (rx != 0 || ry != 0)
+        }
     }
 
     // ---- Orientation ----
