@@ -105,3 +105,48 @@ Track screenshot latency, HID round-trip time, and stream FPS across releases. A
 
 ### Localization
 Support multiple languages for the settings UI. Currently English-only.
+
+## New Ideas (Brainstorm)
+
+### Performance
+- **H.264/HEVC hardware encoding** — replace JPEG with hardware video codec for streaming. Mac's VideoToolbox encodes H.264 at 60 FPS with ~1ms latency. 10x smaller than JPEG at same quality. Android's MediaCodec decodes hardware-accelerated.
+- **Partial screen invalidation** — Mac tracks dirty regions via ScreenCaptureKit's content rect change notifications. Only capture + send the changed rectangle.
+- **Frame skipping under load** — if WiFi is congested, skip frames rather than buffering. Keep the latest frame, discard intermediate ones. Prevents latency buildup.
+- **Bluetooth LE for HID** — BLE has lower connection overhead and better power efficiency than Classic. Could reduce HID latency from ~15ms to ~7.5ms on BLE 5.0+.
+- **Pre-rendered stroke prediction** — predict the next cursor position based on velocity and render a ghost stroke locally before the Mac confirms it. Common in drawing apps for perceived responsiveness.
+
+### Reliability
+- **Connection health indicator** — show real-time connection quality on the toolbar (green/yellow/red based on latency and packet loss). User knows immediately if something is wrong.
+- **Automatic reconnection with backoff** — unified reconnection strategy across HID, RFCOMM, and WiFi with exponential backoff + jitter. Currently each has its own retry logic.
+- **Offline mode** — when Mac is not connected, tablet works as a standalone drawing pad. Strokes are saved and can be exported as SVG/PNG.
+- **Connection diagnostics** — long-press on connection status shows: BT signal strength, WiFi speed, HID latency, RFCOMM state, last error. Helps troubleshooting.
+- **Crash recovery** — if the app crashes during a session, auto-restore the last screenshot, focus rect, and settings on relaunch.
+
+### Intelligence
+- **Smart screenshot timing** — detect when the Mac screen actually changes (via frame diff) and only send updates then. Saves bandwidth when the screen is static.
+- **Adaptive FPS** — dynamically adjust streaming FPS based on screen change rate. Static screen = 1 FPS, active drawing = 30 FPS. Saves battery on both devices.
+- **Auto-detect drawing app** — Mac server detects which app is in foreground (Photoshop, Krita, OneNote) and auto-configures pressure curve, shortcuts, and eraser behavior.
+- **Gesture learning** — track which gestures the user actually uses and surface them more prominently. Hide unused buttons to reduce toolbar clutter.
+- **Smart focus** — auto-detect the active drawing canvas area on the Mac screen and focus on it, instead of requiring manual focus selection.
+
+### Usability
+- **Customizable shortcut buttons** — let users configure what each toolbar button does (any modifier + keycode combination). Currently hardcoded to Undo/Redo/Brush.
+- **Color picker mode** — tap a point on the screenshot to pick the color at that pixel. Send the appropriate shortcut to the drawing app to select that color.
+- **Radial menu** — long-press on the drawing area to show a radial menu with common actions (brush size, color, undo, eraser toggle). Faster than toolbar buttons.
+- **Split screen** — show the Mac screenshot on one half of the tablet and the drawing area on the other half. No need to toggle between drawing and viewing.
+- **Pinch-to-zoom on screenshot** — zoom into the screenshot for detailed reference viewing, independent of the drawing focus area.
+- **Undo on tablet** — maintain a local stroke history. Undo removes the last stroke visually AND sends Ctrl+Z to the Mac. Currently strokes are visual-only on tablet.
+- **Multi-language shortcuts** — keyboard shortcuts differ by locale (Ctrl+Z is universal but other shortcuts vary). Detect Mac keyboard layout and adjust.
+- **Quick settings gestures** — three-finger swipe up/down to adjust pressure sensitivity on the fly. Three-finger tap to toggle pen/mouse mode.
+
+### New Features
+- **Screen recording** — record the Mac screen as a video file on the tablet while drawing. Useful for tutorials and time-lapses.
+- **Annotation mode** — draw on top of the screenshot with different colors/tools, save as an annotated image. Like a whiteboard overlay.
+- **Voice commands** — "Undo", "Zoom in", "Switch to eraser" via tablet microphone. Hands-free while drawing.
+- **Macro recording** — record a sequence of actions (brush strokes, shortcuts) and replay them. Useful for repetitive tasks.
+- **Remote presentation** — use the tablet as a laser pointer / annotation tool during presentations. Draw on slides in real-time.
+- **Multi-Mac switching** — connect to multiple Macs simultaneously and switch between them. Like a KVM switch for drawing tablets.
+- **Pressure calibration wizard** — guided calibration that has the user draw light/medium/heavy strokes and auto-computes optimal floor and curve values.
+- **Template overlays** — load grid, perspective, or proportion guide overlays on the drawing area. Visible on tablet only, doesn't affect Mac.
+- **Clipboard sharing** — copy an image or text on the Mac, paste it on the tablet's drawing area as a reference. Or copy from tablet and paste on Mac.
+- **Touch bar emulation** — show a virtual Touch Bar at the bottom of the tablet screen with context-sensitive controls from the active Mac app.
