@@ -269,6 +269,69 @@ else
     fail "WiFi not connected — stream test skipped"
 fi
 
+# ==== PHASE 8: EDGE CASES ====
+
+info "--- Edge Case: Server killed + screenshot fails gracefully ---"
+# Kill the screenshot server
+kill $SERVER_PID 2>/dev/null || true
+wait $SERVER_PID 2>/dev/null || true
+SERVER_PID=""
+sleep 3
+
+# Try screenshot without server — should fail gracefully
+adb logcat -c 2>/dev/null
+sleep 1
+tap_button "btn_screenshot" 2>/dev/null || adb shell input tap 987 114
+sleep 5
+
+EDGE_LOG=$(adb logcat -d -s BtScreenshot 2>/dev/null)
+if echo "$EDGE_LOG" | grep -qE "screenshot failed|Broken pipe|Mac not connected|Connecting to Mac"; then
+    pass "Screenshot without server: app handled gracefully"
+else
+    # The button may have shown a toast (no logcat for toast).
+    # Verify app didn't crash.
+    ACTIVITY2=$(adb shell "dumpsys activity activities | grep -i tabletpen | head -1" 2>/dev/null || true)
+    if echo "$ACTIVITY2" | grep -qi "tabletpen"; then
+        pass "Screenshot without server: app still running (no crash)"
+    else
+        fail "Screenshot without server: app may have crashed"
+    fi
+fi
+
+info "--- Edge Case: Server restart + reconnection ---"
+# Restart server — should reconnect
+./mac/screenshot-server > "$SERVER_LOG" 2>&1 &
+SERVER_PID=$!
+
+RECONNECTED=false
+for i in $(seq 1 60); do
+    if grep -q "BT connected" "$SERVER_LOG" 2>/dev/null; then
+        RECONNECTED=true
+        break
+    fi
+    sleep 1
+done
+
+if $RECONNECTED; then
+    pass "Server restart: BT RFCOMM reconnected"
+
+    # Take a screenshot to verify it works after reconnect
+    adb logcat -c 2>/dev/null
+    sleep 2
+    tap_button "btn_screenshot" 2>/dev/null || adb shell input tap 987 114
+    sleep 12
+
+    RECON_LOG=$(adb logcat -d -s BtScreenshot 2>/dev/null)
+    if echo "$RECON_LOG" | grep -qE "(BT|WiFi) .+KB.*total:"; then
+        TIMING=$(echo "$RECON_LOG" | grep -oE "(BT|WiFi) .+total:[0-9]+ms" | tail -1)
+        pass "Screenshot after reconnect: $TIMING"
+    else
+        fail "Screenshot after reconnect: transfer failed"
+    fi
+else
+    fail "Server restart: BT RFCOMM did not reconnect within 60s"
+fi
+
 # ==== RESULTS ====
 echo ""
 echo "=============================="
