@@ -33,6 +33,8 @@ The app uses Android's `BluetoothHidDevice` API to register the tablet as a stan
 - **Auto orientation** — landscape/portrait based on target aspect ratio, with manual override
 - **Focus mode** — zoom into a screen region, remap drawing area to that region
 - **Screenshot over Bluetooth** — captures laptop screen via RFCOMM, no WiFi or USB needed
+- **Adaptive screenshot quality** — auto-adjusts resolution and compression based on connection speed
+- **Focused screenshot** — captures only the focused region for sharper detail and lower latency
 - **Auto-connect** — remembers last paired laptop and reconnects on app launch
 - **Settings** — all preferences saved and persisted across sessions
 

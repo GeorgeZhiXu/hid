@@ -78,6 +78,20 @@ object PenMath {
     }
 
     /**
+     * Compute adaptive screenshot quality and max dimension based on recent transfer speed.
+     * Returns (jpegQuality 1-100, maxDimension in pixels).
+     */
+    fun computeAdaptiveQuality(transferMs: Long, transferBytes: Int): Pair<Int, Int> {
+        if (transferMs <= 0 || transferBytes <= 0) return Pair(35, 1280) // default
+        val bytesPerSec = transferBytes * 1000L / transferMs
+        return when {
+            bytesPerSec > 500_000 -> Pair(60, 1920)  // WiFi fast: >500KB/s
+            bytesPerSec > 100_000 -> Pair(40, 1280)  // WiFi medium: >100KB/s
+            else -> Pair(25, 960)                      // BT or slow: <=100KB/s
+        }
+    }
+
+    /**
      * Detect whether a bitmap is light or dark by sampling pixel brightness.
      * Returns Color.BLACK for light backgrounds, Color.WHITE for dark.
      */

@@ -15,7 +15,7 @@ Map `TOOL_TYPE_ERASER` to a separate HID report or button combination. Currently
 ### Stroke thickness based on pressure
 Draw pad visual feedback should show varying stroke width based on pressure, not just a fixed 3px line.
 
-### Adaptive screenshot quality based on connection speed
+### ~~Adaptive screenshot quality based on connection speed~~ (Implemented v0.5.0)
 Screenshots can appear blurry at current fixed 1280px/35% quality. Auto-detect the transport speed (WiFi vs BT, measured from actual transfer times) and dynamically choose resolution and JPEG quality:
 - WiFi fast (~200ms): higher resolution (1920px), higher quality (50-60%)
 - WiFi slow (~500ms): medium (1280px, 35%)
@@ -25,7 +25,7 @@ Also detect the tablet's screen resolution and match the screenshot dimensions t
 ### Windows support
 The Mac screenshot-server is macOS-only (IOBluetooth, screencapture). Create a Windows equivalent using Win32 Bluetooth APIs and screen capture.
 
-### Focused screenshot — capture only the focus region
+### ~~Focused screenshot~~ (Implemented v0.5.0) — capture only the focus region
 When in focus mode, send the focus rectangle coordinates to the Mac server so it captures only that region of the screen. Benefits:
 - **Smaller data** — 25% focus = ~75% less pixels to capture, encode, and transfer
 - **Higher resolution** — same pixel budget concentrated on a smaller area = sharper detail

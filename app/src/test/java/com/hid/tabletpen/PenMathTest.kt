@@ -168,6 +168,46 @@ class PenMathTest {
     fun `wifi prefix only`() {
         assertNull(PenMath.parseWifiInfo("wifi:"))
     }
+
+    // ---- computeAdaptiveQuality ----
+
+    @Test
+    fun `fast WiFi gets high quality`() {
+        // 500KB in 200ms = 2.5MB/s
+        val (q, max) = PenMath.computeAdaptiveQuality(200, 500_000)
+        assertEquals(60, q)
+        assertEquals(1920, max)
+    }
+
+    @Test
+    fun `medium WiFi gets medium quality`() {
+        // 100KB in 500ms = 200KB/s
+        val (q, max) = PenMath.computeAdaptiveQuality(500, 100_000)
+        assertEquals(40, q)
+        assertEquals(1280, max)
+    }
+
+    @Test
+    fun `slow BT gets low quality`() {
+        // 60KB in 4000ms = 15KB/s
+        val (q, max) = PenMath.computeAdaptiveQuality(4000, 60_000)
+        assertEquals(25, q)
+        assertEquals(960, max)
+    }
+
+    @Test
+    fun `no data returns default`() {
+        val (q, max) = PenMath.computeAdaptiveQuality(0, 0)
+        assertEquals(35, q)
+        assertEquals(1280, max)
+    }
+
+    @Test
+    fun `negative values return default`() {
+        val (q, max) = PenMath.computeAdaptiveQuality(-1, -1)
+        assertEquals(35, q)
+        assertEquals(1280, max)
+    }
 }
 
 class StrokeColorTest {

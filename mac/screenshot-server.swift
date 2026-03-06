@@ -13,13 +13,25 @@ let kServiceUUID = "A5D3E9F0-7B1C-4C2E-9F3A-B8C1D2E4F6A7"
 
 // MARK: - Shared capture function
 
-func captureScreen() -> (data: Data, width: Int, height: Int)? {
+func captureScreen(quality: Int? = nil, maxDim: Int? = nil,
+                   region: (x: Double, y: Double, w: Double, h: Double)? = nil) -> (data: Data, width: Int, height: Int)? {
     let t0 = CFAbsoluteTimeGetCurrent()
 
     let jpgPath = "/tmp/tabletpen-ss.jpg"
     let proc = Process()
     proc.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-    proc.arguments = ["-x", "-t", "jpg", "-r", jpgPath]
+    if let r = region {
+        // Region capture: convert normalized (0-1) to screen pixel coordinates
+        let screenW = CGDisplayPixelsWide(CGMainDisplayID())
+        let screenH = CGDisplayPixelsHigh(CGMainDisplayID())
+        let rx = Int(r.x * Double(screenW))
+        let ry = Int(r.y * Double(screenH))
+        let rw = Int(r.w * Double(screenW))
+        let rh = Int(r.h * Double(screenH))
+        proc.arguments = ["-x", "-t", "jpg", "-R", "\(rx),\(ry),\(rw),\(rh)", jpgPath]
+    } else {
+        proc.arguments = ["-x", "-t", "jpg", "-r", jpgPath]
+    }
     try? proc.run()
     proc.waitUntilExit()
     let t1 = CFAbsoluteTimeGetCurrent()
@@ -29,7 +41,7 @@ func captureScreen() -> (data: Data, width: Int, height: Int)? {
     ) else { print("Failed to load capture"); return nil }
 
     let thumbOpts: [CFString: Any] = [
-        kCGImageSourceThumbnailMaxPixelSize: maxDimension,
+        kCGImageSourceThumbnailMaxPixelSize: maxDim ?? maxDimension,
         kCGImageSourceCreateThumbnailFromImageAlways: true,
         kCGImageSourceCreateThumbnailWithTransform: true
     ]
@@ -43,7 +55,7 @@ func captureScreen() -> (data: Data, width: Int, height: Int)? {
         outData, "public.jpeg" as CFString, 1, nil
     ) else { print("JPEG init failed"); return nil }
     CGImageDestinationAddImage(dest, thumb, [
-        kCGImageDestinationLossyCompressionQuality: Double(jpegQuality) / 100.0
+        kCGImageDestinationLossyCompressionQuality: Double(quality ?? jpegQuality) / 100.0
     ] as CFDictionary)
     guard CGImageDestinationFinalize(dest) else { print("JPEG encode failed"); return nil }
     let t3 = CFAbsoluteTimeGetCurrent()
@@ -99,6 +111,43 @@ func getLocalIP() -> String? {
         ptr = ifa.pointee.ifa_next
     }
     return nil
+}
+
+// MARK: - Command parsing
+
+struct CaptureParams {
+    var quality: Int? = nil
+    var maxDim: Int? = nil
+    var region: (x: Double, y: Double, w: Double, h: Double)? = nil
+}
+
+func parseCommand(_ cmd: String) -> (action: String, params: CaptureParams) {
+    let parts = cmd.split(separator: " ", maxSplits: 1)
+    let action = String(parts.first ?? "")
+    var params = CaptureParams()
+
+    if parts.count > 1 {
+        let paramStr = String(parts[1])
+        for token in paramStr.split(separator: " ") {
+            let kv = token.split(separator: "=", maxSplits: 1)
+            guard kv.count == 2 else { continue }
+            let key = String(kv[0])
+            let val_ = String(kv[1])
+            switch key {
+            case "q": params.quality = Int(val_)
+            case "max": params.maxDim = Int(val_)
+            case "r":
+                let coords = val_.split(separator: ",").compactMap { Double($0) }
+                if coords.count == 4 {
+                    params.region = (x: coords[0], y: coords[1],
+                                     w: coords[2] - coords[0], h: coords[3] - coords[1])
+                }
+            default: break
+            }
+        }
+    }
+
+    return (action, params)
 }
 
 // MARK: - WiFi TCP Server
@@ -158,15 +207,16 @@ func handleWifiClient(fd: Int32) {
             let cmd = String(bytes: lineBuf, encoding: .utf8)?.trimmingCharacters(in: .whitespaces) ?? ""
             lineBuf.removeAll()
 
-            if cmd == "screenshot" {
+            let (action, params) = parseCommand(cmd)
+            if action == "screenshot" {
                 let t0 = CFAbsoluteTimeGetCurrent()
-                guard let frame = captureScreen() else { continue }
+                guard let frame = captureScreen(quality: params.quality, maxDim: params.maxDim, region: params.region) else { continue }
                 if !writeFrame(frame.data, to: fd) { break }
                 let totalMs = Int((CFAbsoluteTimeGetCurrent() - t0) * 1000)
-                print("WiFi screenshot: \(frame.data.count/1024)KB total:\(totalMs)ms")
-            } else if cmd == "stream" {
+                print("WiFi screenshot: \(frame.data.count/1024)KB q=\(params.quality ?? jpegQuality) total:\(totalMs)ms")
+            } else if action == "stream" {
                 print("WiFi: streaming started")
-                streamLoop(fd: fd)
+                streamLoop(fd: fd, params: params)
                 print("WiFi: streaming stopped")
             } else if cmd == "stop" {
                 break
@@ -180,7 +230,7 @@ func handleWifiClient(fd: Int32) {
     print("WiFi: client disconnected")
 }
 
-func streamLoop(fd: Int32) {
+func streamLoop(fd: Int32, params: CaptureParams = CaptureParams()) {
     // Make socket non-blocking to check for "stop" command while streaming
     let flags = fcntl(fd, F_GETFL)
     fcntl(fd, F_SETFL, flags | O_NONBLOCK)
@@ -200,7 +250,7 @@ func streamLoop(fd: Int32) {
         // Restore blocking for write
         fcntl(fd, F_SETFL, flags)
 
-        guard let frame = captureScreen() else {
+        guard let frame = captureScreen(quality: params.quality, maxDim: params.maxDim, region: params.region) else {
             usleep(100_000) // 100ms retry
             fcntl(fd, F_SETFL, flags | O_NONBLOCK)
             continue
@@ -428,9 +478,10 @@ class ScreenshotServer: NSObject, IOBluetoothRFCOMMChannelDelegate {
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         self.lastDataTime = CFAbsoluteTimeGetCurrent()
         print("BT received: '\(cmd)'")
-        if cmd == "screenshot" {
-            DispatchQueue.global().async { self.sendScreenshotBT(channel: ch) }
-        } else if cmd.hasPrefix("wifiserver:") {
+        let (action, btParams) = parseCommand(cmd)
+        if action == "screenshot" {
+            DispatchQueue.global().async { self.sendScreenshotBT(channel: ch, params: btParams) }
+        } else if action.hasPrefix("wifiserver") {
             // Tablet is offering a reverse WiFi server — connect outbound
             let parts = cmd.replacingOccurrences(of: "wifiserver:", with: "").split(separator: ":")
             if parts.count == 2, let port = Int(parts[1]) {
@@ -501,9 +552,9 @@ class ScreenshotServer: NSObject, IOBluetoothRFCOMMChannelDelegate {
         livenessTimer = nil
     }
 
-    private func sendScreenshotBT(channel: IOBluetoothRFCOMMChannel) {
+    private func sendScreenshotBT(channel: IOBluetoothRFCOMMChannel, params: CaptureParams = CaptureParams()) {
         let t0 = CFAbsoluteTimeGetCurrent()
-        guard let frame = captureScreen() else { return }
+        guard let frame = captureScreen(quality: params.quality, maxDim: params.maxDim, region: params.region) else { return }
 
         var size = UInt32(frame.data.count).bigEndian
         withUnsafeMutablePointer(to: &size) { p in _ = channel.writeSync(p, length: 4) }

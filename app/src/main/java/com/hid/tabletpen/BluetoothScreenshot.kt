@@ -11,6 +11,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.RectF
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -100,6 +101,24 @@ class BluetoothScreenshot(private val context: Context) {
 
     // Guards BT socket reads
     private val btReadBusy = AtomicBoolean(false)
+
+    // Focus rect for region capture (normalized 0-1, set from MainActivity)
+    @Volatile var focusRect: RectF? = null
+
+    // Transfer speed tracking for adaptive quality
+    @Volatile private var lastTransferMs: Long = 0
+    @Volatile private var lastTransferBytes: Int = 0
+
+    private fun buildCommand(base: String): String {
+        val (quality, maxDim) = PenMath.computeAdaptiveQuality(lastTransferMs, lastTransferBytes)
+        val sb = StringBuilder(base)
+        sb.append(" q=$quality max=$maxDim")
+        focusRect?.let { r ->
+            sb.append(" r=%.3f,%.3f,%.3f,%.3f".format(r.left, r.top, r.right, r.bottom))
+        }
+        sb.append("\n")
+        return sb.toString()
+    }
 
     fun startServer() {
         if (running.getAndSet(true)) return
@@ -348,7 +367,8 @@ class BluetoothScreenshot(private val context: Context) {
         synchronized(socket) {
             try {
                 val t0 = System.currentTimeMillis()
-                socket.outputStream.write("screenshot\n".toByteArray())
+                val cmd = buildCommand("screenshot")
+                socket.outputStream.write(cmd.toByteArray())
                 socket.outputStream.flush()
 
                 val input = socket.inputStream
@@ -364,6 +384,8 @@ class BluetoothScreenshot(private val context: Context) {
                     ?: throw Exception("Failed to decode JPEG")
                 val t3 = System.currentTimeMillis()
 
+                lastTransferMs = t2 - t1
+                lastTransferBytes = size
                 Log.i(TAG, "BT ${bitmap.width}x${bitmap.height} ${size/1024}KB — wait:${t1-t0}ms recv:${t2-t1}ms decode:${t3-t2}ms total:${t3-t0}ms")
                 mainHandler.post { listener?.onScreenshotReceived(bitmap) }
             } catch (e: Exception) {
@@ -381,7 +403,8 @@ class BluetoothScreenshot(private val context: Context) {
         synchronized(socket) {
             try {
                 val t0 = System.currentTimeMillis()
-                socket.getOutputStream().write("screenshot\n".toByteArray())
+                val cmd = buildCommand("screenshot")
+                socket.getOutputStream().write(cmd.toByteArray())
                 socket.getOutputStream().flush()
 
                 val frame = readFrame(socket.getInputStream())
@@ -390,6 +413,8 @@ class BluetoothScreenshot(private val context: Context) {
                     ?: throw Exception("Failed to decode JPEG")
                 val t2 = System.currentTimeMillis()
 
+                lastTransferMs = t1 - t0
+                lastTransferBytes = frame.size
                 Log.i(TAG, "WiFi ${bitmap.width}x${bitmap.height} ${frame.size/1024}KB — transfer:${t1-t0}ms decode:${t2-t1}ms total:${t2-t0}ms")
                 mainHandler.post { listener?.onScreenshotReceived(bitmap) }
             } catch (e: Exception) {
@@ -425,7 +450,8 @@ class BluetoothScreenshot(private val context: Context) {
 
     private fun streamLoop(socket: Socket) {
         try {
-            socket.getOutputStream().write("stream\n".toByteArray())
+            val cmd = buildCommand("stream")
+            socket.getOutputStream().write(cmd.toByteArray())
             socket.getOutputStream().flush()
 
             val input = socket.getInputStream()

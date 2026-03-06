@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.5.0 (2026-03-06)
+
+### Features
+- **Adaptive screenshot quality** — auto-detects connection speed and adjusts resolution/quality: WiFi fast (1920px/60%), WiFi slow (1280px/40%), BT (960px/25%)
+- **Focused screenshot capture** — when in focus mode, Mac captures only the focused screen region instead of full screen. Sharper detail, less data, lower latency.
+
 ## v0.4.0 (2026-03-05)
 
 ### Features

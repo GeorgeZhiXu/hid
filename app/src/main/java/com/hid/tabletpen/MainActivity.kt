@@ -104,6 +104,7 @@ class MainActivity : AppCompatActivity(),
         btScreenshot.listener = object : BluetoothScreenshot.Listener {
             override fun onScreenshotReceived(bitmap: android.graphics.Bitmap) {
                 drawPad.setScreenshot(bitmap)
+                btScreenshot.focusRect = drawPad.focusRect
                 if (settings.clearOnScreenshot) drawPad.clearStrokes()
                 screenshotBtn.text = "Screenshot"
                 screenshotBtn.isEnabled = true
@@ -527,6 +528,7 @@ class MainActivity : AppCompatActivity(),
     private fun onFocusClicked() {
         if (drawPad.focusRect != null) {
             drawPad.resetFocus()
+            btScreenshot.focusRect = null
             focusBtn.text = "Focus"
         } else if (drawPad.focusSelecting) {
             drawPad.focusSelecting = false
