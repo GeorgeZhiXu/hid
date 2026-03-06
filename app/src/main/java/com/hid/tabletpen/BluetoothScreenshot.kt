@@ -91,26 +91,31 @@ class BluetoothScreenshot(private val context: Context) {
                 val server: BluetoothServerSocket =
                     bt.listenUsingInsecureRfcommWithServiceRecord(SERVICE_NAME, SERVICE_UUID)
 
-                Log.i(TAG, "Waiting for Mac to connect...")
-                val socket = server.accept()
+                // Keep server socket open — accept multiple connections
+                // without re-registering SDP record each time
+                while (running.get()) {
+                    Log.i(TAG, "Waiting for Mac to connect...")
+                    val socket = server.accept()
+
+                    connectedSocket.set(socket)
+                    Log.i(TAG, "Mac connected via BT: ${socket.remoteDevice.name}")
+
+                    readWifiInfo(socket)
+
+                    // Keep alive — wait for disconnect
+                    try {
+                        while (running.get() && socket.isConnected) {
+                            Thread.sleep(1000)
+                        }
+                    } catch (_: Exception) {}
+
+                    Log.i(TAG, "Mac disconnected — ready for reconnect")
+                    connectedSocket.set(null)
+                    disconnectWifi()
+                    // Loop back to accept() immediately — server socket still open
+                }
+
                 server.close()
-
-                connectedSocket.set(socket)
-                Log.i(TAG, "Mac connected via BT: ${socket.remoteDevice.name}")
-
-                // Read first line from Mac — may contain WiFi info
-                readWifiInfo(socket)
-
-                // Keep alive — wait for disconnect
-                try {
-                    while (running.get() && socket.isConnected) {
-                        Thread.sleep(1000)
-                    }
-                } catch (_: Exception) {}
-
-                Log.i(TAG, "Mac disconnected")
-                connectedSocket.set(null)
-                disconnectWifi()
             } catch (e: Exception) {
                 if (running.get()) {
                     Log.w(TAG, "Server error: ${e.message}")
