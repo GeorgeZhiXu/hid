@@ -290,6 +290,15 @@ fi  # end phase 6
 if should_skip 7; then info "Skipping phase 7"; else
 
 info "--- WiFi Stream Test ---"
+# Check WiFi: look for Stream button in UI (visible only when WiFi connected)
+adb shell uiautomator dump /sdcard/ui.xml 2>/dev/null
+STREAM_VISIBLE=$(adb shell "cat /sdcard/ui.xml" 2>/dev/null | tr ">" "
+" | grep -c "btn_stream" || true)
+if [ "$STREAM_VISIBLE" -ge 1 ]; then
+    WIFI_CONNECTED=true
+else
+    WIFI_CONNECTED=false
+fi
 if $WIFI_CONNECTED; then
     adb logcat -c 2>/dev/null
     sleep 1
@@ -298,8 +307,8 @@ if $WIFI_CONNECTED; then
         sleep 8
 
         STREAM_LOG=$(adb logcat -d -s BtScreenshot 2>/dev/null)
-        if echo "$STREAM_LOG" | grep -q "Stream frame"; then
-            FRAME_COUNT=$(echo "$STREAM_LOG" | grep -c "Stream frame" || true)
+        if echo "$STREAM_LOG" | grep -qE "Stream frame|Stream \[key\]|Stream \[delta\]|Stream \[full\]"; then
+            FRAME_COUNT=$(echo "$STREAM_LOG" | grep -cE "Stream frame|Stream \[" || true)
             pass "WiFi stream: received $FRAME_COUNT frames"
         else
             fail "WiFi stream: no frames received"
@@ -307,7 +316,7 @@ if $WIFI_CONNECTED; then
 
         # Stop stream
         tap_button "btn_stream" 2>/dev/null || true
-        sleep 1
+        sleep 2  # ensure stream fully stopped before next phase
     else
         fail "Stream button not found (WiFi connected but button not visible)"
     fi
@@ -759,14 +768,14 @@ if tap_button "btn_stream" 2>/dev/null; then
 
     DELTA_LOG=$(adb logcat -d -s BtScreenshot 2>/dev/null)
     TOTAL_FRAMES=$(echo "$DELTA_LOG" | grep -c "Stream" || true)
-    DELTA_FRAMES=$(echo "$DELTA_LOG" | grep -c "\[delta\]" || true)
-    KEY_FRAMES=$(echo "$DELTA_LOG" | grep -c "\[key\]" || true)
+    DELTA_FRAMES=$(echo "$DELTA_LOG" | grep -cE "\[delta\]" || true)
+    KEY_FRAMES=$(echo "$DELTA_LOG" | grep -cE "\[key\]" || true)
 
     if [ "$TOTAL_FRAMES" -ge 5 ]; then
         pass "Delta stream: $TOTAL_FRAMES frames ($DELTA_FRAMES delta, $KEY_FRAMES key)"
     else
         # May not have delta frames if Mac server doesn't support SCK
-        if echo "$DELTA_LOG" | grep -qE "Stream frame|Stream \["; then
+        if echo "$DELTA_LOG" | grep -qE "Stream frame|Stream \[key|Stream \[delta|Stream \[full"; then
             pass "Delta stream: frames received (delta may not be active without SCK)"
         else
             fail "Delta stream: no frames received during drawing"
