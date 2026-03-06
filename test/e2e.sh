@@ -11,8 +11,8 @@ NC='\033[0m'
 PASS=0
 FAIL=0
 
-pass() { echo -e "${GREEN}PASS${NC}: $1"; ((PASS++)); }
-fail() { echo -e "${RED}FAIL${NC}: $1"; ((FAIL++)); }
+pass() { echo -e "${GREEN}PASS${NC}: $1"; ((PASS++)) || true; }
+fail() { echo -e "${RED}FAIL${NC}: $1"; ((FAIL++)) || true; }
 info() { echo -e "${YELLOW}INFO${NC}: $1"; }
 
 # ---- Step 1: Build ----
