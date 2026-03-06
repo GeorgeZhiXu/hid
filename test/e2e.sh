@@ -217,8 +217,11 @@ fi
 # ==== PHASE 6: WIFI SCREENSHOT TEST ====
 
 info "--- WiFi Screenshot Test ---"
-# Check if WiFi connected
-if echo "$LOGCAT" | grep -q "WiFi connected"; then
+# Check if the first screenshot went over WiFi (already proven) or check full logcat
+FULL_LOGCAT=$(adb logcat -d -s BtScreenshot 2>/dev/null)
+WIFI_CONNECTED=false
+if echo "$FULL_LOGCAT" | grep -q "WiFi connected\|WiFi .*KB.*total:"; then
+    WIFI_CONNECTED=true
     pass "WiFi transport connected"
 
     # Take another screenshot — should go over WiFi
@@ -232,23 +235,21 @@ if echo "$LOGCAT" | grep -q "WiFi connected"; then
         TIMING=$(echo "$LOGCAT2" | grep -oE "WiFi .+total:[0-9]+ms" | tail -1)
         pass "WiFi screenshot: $TIMING"
     else
-        info "WiFi screenshot not confirmed — may have used BT"
-        fail "WiFi screenshot"
+        fail "WiFi screenshot: transfer not over WiFi"
     fi
 else
-    info "WiFi not connected — skipping WiFi screenshot test"
-    info "(This is expected if firewall blocks both directions)"
+    fail "WiFi not connected (both devices on same network?)"
 fi
 
 # ==== PHASE 7: WIFI STREAM TEST ====
 
 info "--- WiFi Stream Test ---"
-STREAM_LOGCAT=$(adb logcat -d -s BtScreenshot 2>/dev/null)
-if echo "$STREAM_LOGCAT" | grep -q "WiFi connected"; then
-    # Try to tap Stream button
+if $WIFI_CONNECTED; then
+    adb logcat -c 2>/dev/null
+    sleep 1
     if tap_button "btn_stream" 2>/dev/null; then
-        info "Tapped Stream button"
-        sleep 5  # let a few frames come in
+        info "Tapped Stream button — waiting for frames..."
+        sleep 8
 
         STREAM_LOG=$(adb logcat -d -s BtScreenshot 2>/dev/null)
         if echo "$STREAM_LOG" | grep -q "Stream frame"; then
@@ -262,10 +263,10 @@ if echo "$STREAM_LOGCAT" | grep -q "WiFi connected"; then
         tap_button "btn_stream" 2>/dev/null || true
         sleep 1
     else
-        info "Stream button not visible — WiFi may not be connected"
+        fail "Stream button not found (WiFi connected but button not visible)"
     fi
 else
-    info "WiFi not connected — skipping stream test"
+    fail "WiFi not connected — stream test skipped"
 fi
 
 # ==== RESULTS ====
