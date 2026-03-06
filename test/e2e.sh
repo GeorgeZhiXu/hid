@@ -1,6 +1,7 @@
 #!/bin/bash
-# End-to-end test: builds, installs, starts server, triggers screenshot, verifies
-# Requires: tablet connected via USB (adb), Bluetooth paired with Mac
+# End-to-end test for TabletPen: HID input, BT screenshot, WiFi screenshot, streaming
+# Requires: tablet connected via USB (adb) + Bluetooth paired with Mac
+# IMPORTANT: Do NOT touch the Mac mouse/trackpad during the test!
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -15,7 +16,46 @@ pass() { echo -e "${GREEN}PASS${NC}: $1"; ((PASS++)) || true; }
 fail() { echo -e "${RED}FAIL${NC}: $1"; ((FAIL++)) || true; }
 info() { echo -e "${YELLOW}INFO${NC}: $1"; }
 
-# ---- Step 1: Build ----
+get_mouse_pos() {
+    ./test/mouse-pos 2>/dev/null || echo "0,0"
+}
+
+# Tap a button by resource ID using uiautomator
+tap_button() {
+    local btn_id="$1"
+    adb shell uiautomator dump /sdcard/ui.xml 2>/dev/null
+    local bounds
+    bounds=$(adb shell "cat /sdcard/ui.xml" 2>/dev/null | tr '>' '\n' | grep "$btn_id" | grep -o 'bounds="\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]"' | head -1)
+    if [ -n "$bounds" ]; then
+        local x1 y1 x2 y2 cx cy
+        x1=$(echo "$bounds" | grep -o '\[[0-9]*,' | head -1 | tr -d '[,')
+        y1=$(echo "$bounds" | grep -o ',[0-9]*\]' | head -1 | tr -d ',]')
+        x2=$(echo "$bounds" | grep -o '\[[0-9]*,' | tail -1 | tr -d '[,')
+        y2=$(echo "$bounds" | grep -o ',[0-9]*\]' | tail -1 | tr -d ',]')
+        cx=$(( (x1 + x2) / 2 ))
+        cy=$(( (y1 + y2) / 2 ))
+        adb shell input tap $cx $cy
+        return 0
+    fi
+    return 1
+}
+
+SERVER_PID=""
+cleanup() {
+    [ -n "$SERVER_PID" ] && kill $SERVER_PID 2>/dev/null || true
+    rm -f "$SERVER_LOG" 2>/dev/null || true
+}
+trap cleanup EXIT
+SERVER_LOG=$(mktemp)
+
+echo "============================================"
+echo "  TabletPen E2E Test"
+echo "  DO NOT touch the Mac mouse during the test"
+echo "============================================"
+echo ""
+
+# ==== PHASE 1: BUILD ====
+
 info "Building Android APK..."
 if ANDROID_HOME="${ANDROID_HOME:-/opt/homebrew/share/android-commandlinetools}" \
     ./gradlew assembleDebug -q 2>/dev/null; then
@@ -25,12 +65,12 @@ else
 fi
 
 info "Building mouse-pos helper..."
-if cd test && swiftc mouse-pos.swift -o mouse-pos 2>/dev/null; then
-    pass "mouse-pos builds"
+if [ ! -f test/mouse-pos ] || [ test/mouse-pos.swift -nt test/mouse-pos ]; then
+    if cd test && swiftc mouse-pos.swift -o mouse-pos 2>/dev/null; then pass "mouse-pos builds"; else fail "mouse-pos build"; fi
+    cd ..
 else
-    fail "mouse-pos build"
+    pass "mouse-pos up to date"
 fi
-cd ..
 
 info "Building Mac screenshot-server..."
 if [ ! -f mac/screenshot-server ] || [ mac/screenshot-server.swift -nt mac/screenshot-server ]; then
@@ -45,8 +85,8 @@ else
     pass "Mac binary up to date"
 fi
 
+# ==== PHASE 2: UNIT TESTS ====
 
-# ---- Step 2: Unit tests ----
 info "Running unit tests..."
 if ANDROID_HOME="${ANDROID_HOME:-/opt/homebrew/share/android-commandlinetools}" \
     ./gradlew test -q 2>/dev/null; then
@@ -55,7 +95,8 @@ else
     fail "Unit tests"
 fi
 
-# ---- Step 3: Check adb device ----
+# ==== PHASE 3: DEVICE CHECK + INSTALL ====
+
 info "Checking for connected device..."
 DEVICE_COUNT=$(adb devices 2>/dev/null | grep -c "device$" || true)
 if [ "$DEVICE_COUNT" -ge 1 ]; then
@@ -68,7 +109,6 @@ else
     exit $FAIL
 fi
 
-# ---- Step 4: Install APK ----
 info "Installing APK..."
 if adb install -r app/build/outputs/apk/debug/app-debug.apk 2>/dev/null | grep -q "Success"; then
     pass "APK installed"
@@ -76,39 +116,53 @@ else
     fail "APK install"
 fi
 
-# ---- Step 5: Launch app ----
 info "Launching TabletPen app..."
 adb shell am start -n com.hid.tabletpen/.MainActivity 2>/dev/null
 sleep 5
-# Check if the activity exists (may be paused if tablet screen is on different app)
 ACTIVITY=$(adb shell "dumpsys activity activities | grep -i tabletpen | head -1" 2>/dev/null || true)
 if echo "$ACTIVITY" | grep -qi "tabletpen"; then
     pass "App launched"
 else
     fail "App launch"
 fi
-# Bring app to foreground
 adb shell am start -n com.hid.tabletpen/.MainActivity 2>/dev/null
 sleep 2
 
-# ---- Step 6: Start Mac server ----
+# ==== PHASE 4: HID INPUT TEST ====
+# Test finger input moves Mac cursor (tests full HID round-trip)
+
+info "--- HID Input Test ---"
+info "Recording mouse position (DO NOT touch mouse!)..."
+sleep 2
+POS_BEFORE=$(get_mouse_pos)
+info "Mouse position before: $POS_BEFORE"
+
+# Simulate finger swipe on the draw pad area
+info "Sending finger swipe via adb..."
+adb shell input swipe 500 500 1200 500 500   # large horizontal swipe
+sleep 2
+adb shell input swipe 800 300 800 800 500   # large vertical swipe
+sleep 2
+
+POS_AFTER=$(get_mouse_pos)
+info "Mouse position after: $POS_AFTER"
+
+if [ "$POS_BEFORE" != "$POS_AFTER" ]; then
+    pass "HID finger input: cursor moved $POS_BEFORE → $POS_AFTER"
+else
+    fail "HID finger input: cursor did not move"
+    info "Check: Is tablet BT HID-paired with this Mac?"
+fi
+
+# ==== PHASE 5: START MAC SERVER + BT SCREENSHOT ====
+
+info "--- BT Screenshot Test ---"
 info "Starting screenshot server..."
-SERVER_LOG=$(mktemp)
 ./mac/screenshot-server > "$SERVER_LOG" 2>&1 &
 SERVER_PID=$!
-cleanup() {
-    kill $SERVER_PID 2>/dev/null || true
-    rm -f "$SERVER_LOG"
-}
-trap cleanup EXIT
 
-# Helper: get current Mac mouse cursor position
-get_mouse_pos() {
-    ./test/mouse-pos 2>/dev/null || echo "0,0"
-}
-
-# Wait for BT connection (up to 60s)
-info "Waiting for Bluetooth RFCOMM connection (up to 60s)..."
+# Wait for BT RFCOMM connection
+info "Waiting for BT RFCOMM connection (up to 60s)..."
 BT_CONNECTED=false
 for i in $(seq 1 60); do
     if grep -q "BT connected" "$SERVER_LOG" 2>/dev/null; then
@@ -123,7 +177,6 @@ if $BT_CONNECTED; then
     pass "BT RFCOMM connected to: $DEVICE_NAME"
 else
     fail "BT RFCOMM connection (timeout)"
-    echo ""
     echo "Server log:"
     cat "$SERVER_LOG"
     echo ""
@@ -131,74 +184,91 @@ else
     exit 1
 fi
 
-# ---- Step 7: Trigger screenshot ----
-info "Triggering screenshot via adb..."
+# Trigger BT screenshot
+info "Triggering screenshot..."
 adb logcat -c 2>/dev/null
-# Find Screenshot button bounds from UI dump and tap center
-adb shell uiautomator dump /sdcard/ui.xml 2>/dev/null
-BOUNDS=$(adb shell "cat /sdcard/ui.xml" 2>/dev/null | tr '>' '\n' | grep 'btn_screenshot' | grep -o 'bounds="\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]"' | head -1)
-if [ -n "$BOUNDS" ]; then
-    # Parse [left,top][right,bottom] → tap center
-    X1=$(echo "$BOUNDS" | grep -o '\[[0-9]*,' | head -1 | tr -d '[,')
-    Y1=$(echo "$BOUNDS" | grep -o ',[0-9]*\]' | head -1 | tr -d ',]')
-    X2=$(echo "$BOUNDS" | grep -o '\[[0-9]*,' | tail -1 | tr -d '[,')
-    Y2=$(echo "$BOUNDS" | grep -o ',[0-9]*\]' | tail -1 | tr -d ',]')
-    CX=$(( (X1 + X2) / 2 ))
-    CY=$(( (Y1 + Y2) / 2 ))
-    info "Tapping Screenshot button at ($CX, $CY)"
-    adb shell input tap $CX $CY
+sleep 1
+if tap_button "btn_screenshot"; then
+    info "Tapped Screenshot button"
 else
-    info "Button not found via UI dump, tapping approximate location"
+    info "Button not found, tapping fallback location"
     adb shell input tap 987 114
 fi
-sleep 10  # wait for BT screenshot transfer
+sleep 12  # BT transfer can be slow
 
-# ---- Step 8: Check screenshot result ----
 LOGCAT=$(adb logcat -d -s BtScreenshot 2>/dev/null)
-if echo "$LOGCAT" | grep -qE "BT .+KB|WiFi .+KB"; then
-    TIMING=$(echo "$LOGCAT" | grep -oE "(BT|WiFi) .+total:[0-9]+ms" | tail -1)
-    pass "Screenshot received: $TIMING"
-elif echo "$LOGCAT" | grep -q "screenshot failed"; then
-    fail "Screenshot failed (see logcat)"
+if echo "$LOGCAT" | grep -qE "BT .+KB.*total:" ; then
+    TIMING=$(echo "$LOGCAT" | grep -oE "BT .+total:[0-9]+ms" | tail -1)
+    pass "BT screenshot: $TIMING"
+elif echo "$LOGCAT" | grep -qE "WiFi .+KB.*total:"; then
+    TIMING=$(echo "$LOGCAT" | grep -oE "WiFi .+total:[0-9]+ms" | tail -1)
+    pass "WiFi screenshot: $TIMING"
 else
-    info "Screenshot result unclear — check manually"
-    fail "Screenshot verification"
+    fail "Screenshot not received (check logcat)"
 fi
 
-# Check Mac server log for capture
 if grep -q "capture:" "$SERVER_LOG" 2>/dev/null; then
     CAPTURE=$(grep "capture:" "$SERVER_LOG" | tail -1)
-    pass "Mac captured: $CAPTURE"
+    pass "Mac capture: $CAPTURE"
 else
     fail "Mac capture not found in server log"
 fi
 
-# ---- Step 9: Test finger input → Mac cursor moves ----
-info "Testing finger input → Mac mouse cursor..."
+# ==== PHASE 6: WIFI SCREENSHOT TEST ====
 
-# Record mouse position before
-POS_BEFORE=$(get_mouse_pos)
-info "Mouse position before: $POS_BEFORE"
+info "--- WiFi Screenshot Test ---"
+# Check if WiFi connected
+if echo "$LOGCAT" | grep -q "WiFi connected"; then
+    pass "WiFi transport connected"
 
-# Simulate finger drag on the drawing area via adb
-# Swipe across the draw pad (below toolbar, ~y=400 to avoid buttons)
-adb shell input swipe 400 400 900 400 500   # horizontal swipe, 500ms
-sleep 1
-adb shell input swipe 600 300 600 700 500   # vertical swipe, 500ms
-sleep 1
+    # Take another screenshot — should go over WiFi
+    adb logcat -c 2>/dev/null
+    sleep 1
+    tap_button "btn_screenshot" 2>/dev/null || adb shell input tap 987 114
+    sleep 5
 
-# Record mouse position after
-POS_AFTER=$(get_mouse_pos)
-info "Mouse position after: $POS_AFTER"
-
-if [ "$POS_BEFORE" != "$POS_AFTER" ]; then
-    pass "Mac cursor moved: $POS_BEFORE → $POS_AFTER"
+    LOGCAT2=$(adb logcat -d -s BtScreenshot 2>/dev/null)
+    if echo "$LOGCAT2" | grep -qE "WiFi .+KB.*total:"; then
+        TIMING=$(echo "$LOGCAT2" | grep -oE "WiFi .+total:[0-9]+ms" | tail -1)
+        pass "WiFi screenshot: $TIMING"
+    else
+        info "WiFi screenshot not confirmed — may have used BT"
+        fail "WiFi screenshot"
+    fi
 else
-    fail "Mac cursor did not move (HID input not reaching Mac)"
-    info "Check: Is tablet paired as BT HID device? Is pen/mouse mode active?"
+    info "WiFi not connected — skipping WiFi screenshot test"
+    info "(This is expected if firewall blocks both directions)"
 fi
 
-# ---- Results ----
+# ==== PHASE 7: WIFI STREAM TEST ====
+
+info "--- WiFi Stream Test ---"
+STREAM_LOGCAT=$(adb logcat -d -s BtScreenshot 2>/dev/null)
+if echo "$STREAM_LOGCAT" | grep -q "WiFi connected"; then
+    # Try to tap Stream button
+    if tap_button "btn_stream" 2>/dev/null; then
+        info "Tapped Stream button"
+        sleep 5  # let a few frames come in
+
+        STREAM_LOG=$(adb logcat -d -s BtScreenshot 2>/dev/null)
+        if echo "$STREAM_LOG" | grep -q "Stream frame"; then
+            FRAME_COUNT=$(echo "$STREAM_LOG" | grep -c "Stream frame" || true)
+            pass "WiFi stream: received $FRAME_COUNT frames"
+        else
+            fail "WiFi stream: no frames received"
+        fi
+
+        # Stop stream
+        tap_button "btn_stream" 2>/dev/null || true
+        sleep 1
+    else
+        info "Stream button not visible — WiFi may not be connected"
+    fi
+else
+    info "WiFi not connected — skipping stream test"
+fi
+
+# ==== RESULTS ====
 echo ""
 echo "=============================="
 echo -e "Results: ${GREEN}${PASS} passed${NC}, ${RED}${FAIL} failed${NC}"
