@@ -47,6 +47,10 @@ class MainActivity : AppCompatActivity(),
     private lateinit var screenshotBtn: Button
     private lateinit var streamBtn: Button
     private lateinit var focusBtn: Button
+    private lateinit var undoBtn: Button
+    private lateinit var redoBtn: Button
+    private lateinit var brushSmallBtn: Button
+    private lateinit var brushLargeBtn: Button
 
     private var hidRegistered = false
 
@@ -87,6 +91,10 @@ class MainActivity : AppCompatActivity(),
         screenshotBtn = findViewById(R.id.btn_screenshot)
         streamBtn = findViewById(R.id.btn_stream)
         focusBtn = findViewById(R.id.btn_focus)
+        undoBtn = findViewById(R.id.btn_undo)
+        redoBtn = findViewById(R.id.btn_redo)
+        brushSmallBtn = findViewById(R.id.btn_brush_small)
+        brushLargeBtn = findViewById(R.id.btn_brush_large)
 
         hidManager = BluetoothHidManager(this)
         hidManager.listener = this
@@ -142,6 +150,10 @@ class MainActivity : AppCompatActivity(),
         streamBtn.setOnClickListener { onStreamClicked() }
         focusBtn.setOnClickListener { onFocusClicked() }
         settingsBtn.setOnClickListener { showSettingsDialog() }
+        undoBtn.setOnClickListener { sendShortcut(HidDescriptor.MOD_LEFT_CTRL, HidDescriptor.KEY_Z) }
+        redoBtn.setOnClickListener { sendShortcut(HidDescriptor.MOD_LEFT_CTRL or HidDescriptor.MOD_LEFT_SHIFT, HidDescriptor.KEY_Z) }
+        brushSmallBtn.setOnClickListener { sendShortcut(0, HidDescriptor.KEY_LBRACKET) }
+        brushLargeBtn.setOnClickListener { sendShortcut(0, HidDescriptor.KEY_RBRACKET) }
 
         updateUI()
         applyOrientation()
@@ -206,12 +218,15 @@ class MainActivity : AppCompatActivity(),
         )
 
         val isEraser = event.toolType == android.view.MotionEvent.TOOL_TYPE_ERASER
+        val tiltX = (event.tiltX * HidDescriptor.TILT_MAX).toInt()
+        val tiltY = (event.tiltY * HidDescriptor.TILT_MAX).toInt()
         val sent = hidManager.sendDigitizerReport(
             tipDown = event.tipDown,
             barrel = event.barrel,
             inRange = event.inRange,
             x = x, y = y, pressure = pressure,
-            eraser = isEraser
+            eraser = isEraser,
+            tiltX = tiltX, tiltY = tiltY
         )
         if (event.tipDown) {
             android.util.Log.d("HidReport", "tip=${event.tipDown} eraser=$isEraser x=$x y=$y p=$pressure sent=$sent")
@@ -239,6 +254,16 @@ class MainActivity : AppCompatActivity(),
     private fun cancelAutoRecapture() {
         autoRecaptureRunnable?.let { uiHandler.removeCallbacks(it) }
         autoRecaptureRunnable = null
+    }
+
+    // ---- Keyboard shortcuts ----
+
+    private fun sendShortcut(modifiers: Int, vararg keycodes: Int) {
+        if (!hidManager.isConnected) return
+        hidManager.sendKeyboardReport(modifiers, *keycodes)
+        uiHandler.postDelayed({
+            hidManager.sendKeyboardReport(0)  // release all keys
+        }, 50)
     }
 
     // ---- Mouse event → BT HID mouse report ----

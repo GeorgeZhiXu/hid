@@ -117,11 +117,13 @@ class BluetoothHidManager(private val context: Context) {
         x: Int,
         y: Int,
         pressure: Int,
-        eraser: Boolean = false
+        eraser: Boolean = false,
+        tiltX: Int = 0,
+        tiltY: Int = 0
     ): Boolean {
         val device = connectedDevice ?: return false
         val hid = hidDevice ?: return false
-        val report = HidDescriptor.buildReport(tipDown, barrel, inRange, x, y, pressure, eraser)
+        val report = HidDescriptor.buildReport(tipDown, barrel, inRange, x, y, pressure, eraser, tiltX, tiltY)
         return hid.sendReport(device, HidDescriptor.REPORT_ID_DIGITIZER, report)
     }
 
@@ -139,10 +141,10 @@ class BluetoothHidManager(private val context: Context) {
         return hid.sendReport(device, HidDescriptor.REPORT_ID_MOUSE, report)
     }
 
-    fun sendKeyboardReport(modifiers: Int): Boolean {
+    fun sendKeyboardReport(modifiers: Int, vararg keycodes: Int): Boolean {
         val device = connectedDevice ?: return false
         val hid = hidDevice ?: return false
-        val report = HidDescriptor.buildKeyboardReport(modifiers)
+        val report = HidDescriptor.buildKeyboardReport(modifiers, *keycodes)
         return hid.sendReport(device, HidDescriptor.REPORT_ID_KEYBOARD, report)
     }
 

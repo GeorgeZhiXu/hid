@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.7.0 (2026-03-06)
+
+### Features
+- **Pen tilt support** — X/Y tilt data sent to host for brush angle in Photoshop, Krita, etc.
+- **Keyboard shortcuts** — Undo, Redo, Brush [-]/[+] buttons on the tablet toolbar
+- HID keyboard report enhanced to support keycodes (was modifiers-only)
+
 ## v0.6.0 (2026-03-06)
 
 ### Features

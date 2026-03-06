@@ -6,7 +6,7 @@
 After the user finishes a stroke (pen lifts), automatically re-capture the Mac screen after a short delay. This lets the user see the result of their drawing without manually tapping Screenshot.
 **Depends on:** Adaptive screenshot quality (need fast enough capture to not disrupt drawing).
 
-### Tilt and rotation support
+### ~~Tilt and rotation support~~ (Implemented v0.7.0)
 Samsung S Pen and Boox stylus report tilt data. Add tilt X/Y to the HID descriptor for apps that support it (Photoshop, Krita).
 
 ### ~~Eraser tool support~~ (Implemented v0.6.0)
@@ -43,7 +43,7 @@ Only send pixels that changed since the last screenshot. Reduces transfer size d
 ### Multi-monitor support
 Let user select which Mac screen to capture. Currently captures the main display only.
 
-### Keyboard shortcuts on tablet
+### ~~Keyboard shortcuts on tablet~~ (Implemented v0.7.0)
 Add configurable shortcut buttons on the tablet (Undo, Redo, Brush size +/-) that send keyboard HID reports to the Mac.
 
 ### Battery status reporting

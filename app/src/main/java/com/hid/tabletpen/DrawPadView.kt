@@ -29,7 +29,9 @@ class DrawPadView @JvmOverloads constructor(
         val normalizedX: Float,
         val normalizedY: Float,
         val pressure: Float,
-        val toolType: Int
+        val toolType: Int,
+        val tiltX: Float = 0f,
+        val tiltY: Float = 0f
     )
 
     data class MouseEvent(
@@ -303,13 +305,20 @@ class DrawPadView @JvmOverloads constructor(
                 toolType = event.getToolType(0)
             )
         }
+        // Extract tilt: magnitude + orientation → X/Y components
+        val tiltMag = event.getAxisValue(MotionEvent.AXIS_TILT)
+        val orientation = event.orientation
+        val tX = (tiltMag * kotlin.math.cos(orientation.toDouble())).toFloat()
+        val tY = (tiltMag * kotlin.math.sin(orientation.toDouble())).toFloat()
         processPointer(
             action = event.actionMasked,
             x = event.x,
             y = event.y,
             pressure = event.pressure,
             buttonState = event.buttonState,
-            toolType = event.getToolType(0)
+            toolType = event.getToolType(0),
+            tiltX = tX,
+            tiltY = tY
         )
         return true
     }
@@ -328,7 +337,8 @@ class DrawPadView @JvmOverloads constructor(
 
     private fun processPointer(
         action: Int, x: Float, y: Float, pressure: Float,
-        buttonState: Int, toolType: Int
+        buttonState: Int, toolType: Int,
+        tiltX: Float = 0f, tiltY: Float = 0f
     ) {
         if (activeRect.isEmpty) return
 
@@ -347,7 +357,7 @@ class DrawPadView @JvmOverloads constructor(
         when (toolType) {
             MotionEvent.TOOL_TYPE_STYLUS, MotionEvent.TOOL_TYPE_ERASER -> {
                 when (inputMode) {
-                    InputMode.DIGITIZER -> processDigitizer(action, x, y, pressure, buttonState, toolType)
+                    InputMode.DIGITIZER -> processDigitizer(action, x, y, pressure, buttonState, toolType, tiltX, tiltY)
                     InputMode.MOUSE -> processMouse(action, x, y, buttonState)
                 }
             }
@@ -386,7 +396,8 @@ class DrawPadView @JvmOverloads constructor(
 
     private fun processDigitizer(
         action: Int, x: Float, y: Float, pressure: Float,
-        buttonState: Int, toolType: Int
+        buttonState: Int, toolType: Int,
+        tiltX: Float = 0f, tiltY: Float = 0f
     ) {
         val barrel = buttonState and MotionEvent.BUTTON_STYLUS_PRIMARY != 0
 
@@ -401,7 +412,7 @@ class DrawPadView @JvmOverloads constructor(
                 lastY = y
                 val nx = ((x - activeRect.left) / activeRect.width()).coerceIn(0f, 1f)
                 val ny = ((y - activeRect.top) / activeRect.height()).coerceIn(0f, 1f)
-                dispatchPen(tipDown = true, barrel = barrel, inRange = true, nx, ny, pressure, toolType)
+                dispatchPen(tipDown = true, barrel = barrel, inRange = true, nx, ny, pressure, toolType, tiltX, tiltY)
             }
             MotionEvent.ACTION_MOVE -> {
                 if (isDown) {
@@ -410,7 +421,7 @@ class DrawPadView @JvmOverloads constructor(
                         // Within dead zone: send start position to stabilize tap
                         val nx = ((penDownX - activeRect.left) / activeRect.width()).coerceIn(0f, 1f)
                         val ny = ((penDownY - activeRect.top) / activeRect.height()).coerceIn(0f, 1f)
-                        dispatchPen(tipDown = true, barrel = barrel, inRange = true, nx, ny, pressure, toolType)
+                        dispatchPen(tipDown = true, barrel = barrel, inRange = true, nx, ny, pressure, toolType, tiltX, tiltY)
                     } else {
                         // Exceeded dead zone: track actual position
                         if (!penStabilized) {
@@ -424,12 +435,12 @@ class DrawPadView @JvmOverloads constructor(
                         lastY = y
                         val nx = ((x - activeRect.left) / activeRect.width()).coerceIn(0f, 1f)
                         val ny = ((y - activeRect.top) / activeRect.height()).coerceIn(0f, 1f)
-                        dispatchPen(tipDown = true, barrel = barrel, inRange = true, nx, ny, pressure, toolType)
+                        dispatchPen(tipDown = true, barrel = barrel, inRange = true, nx, ny, pressure, toolType, tiltX, tiltY)
                     }
                 } else {
                     val nx = ((x - activeRect.left) / activeRect.width()).coerceIn(0f, 1f)
                     val ny = ((y - activeRect.top) / activeRect.height()).coerceIn(0f, 1f)
-                    dispatchPen(tipDown = false, barrel = barrel, inRange = true, nx, ny, pressure, toolType)
+                    dispatchPen(tipDown = false, barrel = barrel, inRange = true, nx, ny, pressure, toolType, tiltX, tiltY)
                 }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
@@ -437,28 +448,29 @@ class DrawPadView @JvmOverloads constructor(
                 penStabilized = false
                 val nx = ((x - activeRect.left) / activeRect.width()).coerceIn(0f, 1f)
                 val ny = ((y - activeRect.top) / activeRect.height()).coerceIn(0f, 1f)
-                dispatchPen(tipDown = false, barrel = false, inRange = false, nx, ny, 0f, toolType)
+                dispatchPen(tipDown = false, barrel = false, inRange = false, nx, ny, 0f, toolType, 0f, 0f)
             }
             MotionEvent.ACTION_HOVER_ENTER, MotionEvent.ACTION_HOVER_MOVE -> {
                 val nx = ((x - activeRect.left) / activeRect.width()).coerceIn(0f, 1f)
                 val ny = ((y - activeRect.top) / activeRect.height()).coerceIn(0f, 1f)
-                dispatchPen(tipDown = false, barrel = barrel, inRange = true, nx, ny, 0f, toolType)
+                dispatchPen(tipDown = false, barrel = barrel, inRange = true, nx, ny, 0f, toolType, tiltX, tiltY)
             }
             MotionEvent.ACTION_HOVER_EXIT -> {
                 cursorX = -1f
                 cursorY = -1f
                 val nx = ((x - activeRect.left) / activeRect.width()).coerceIn(0f, 1f)
                 val ny = ((y - activeRect.top) / activeRect.height()).coerceIn(0f, 1f)
-                dispatchPen(tipDown = false, barrel = false, inRange = false, nx, ny, 0f, toolType)
+                dispatchPen(tipDown = false, barrel = false, inRange = false, nx, ny, 0f, toolType, 0f, 0f)
             }
         }
     }
 
     private fun dispatchPen(
         tipDown: Boolean, barrel: Boolean, inRange: Boolean,
-        nx: Float, ny: Float, pressure: Float, toolType: Int
+        nx: Float, ny: Float, pressure: Float, toolType: Int,
+        tiltX: Float = 0f, tiltY: Float = 0f
     ) {
-        onPenEvent?.invoke(PenEvent(tipDown, barrel, inRange, nx, ny, pressure, toolType))
+        onPenEvent?.invoke(PenEvent(tipDown, barrel, inRange, nx, ny, pressure, toolType, tiltX, tiltY))
     }
 
     // ---- Mouse mode ----

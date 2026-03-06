@@ -171,4 +171,66 @@ class HidDescriptorTest {
         val report = HidDescriptor.buildReport(true, true, true, 0, 0, 0)
         assertEquals(0x07, report[0].toInt() and 0xFF) // no eraser bit
     }
+
+    // ---- Tilt support ----
+
+    @Test
+    fun `buildReport returns 11 bytes with tilt`() {
+        val report = HidDescriptor.buildReport(true, false, true, 100, 200, 500, tiltX = 50, tiltY = -30)
+        assertEquals(HidDescriptor.DIGITIZER_REPORT_SIZE, report.size)
+        assertEquals(11, report.size)
+    }
+
+    @Test
+    fun `buildReport tilt X encoded as little-endian int16`() {
+        val report = HidDescriptor.buildReport(false, false, false, 0, 0, 0, tiltX = 100, tiltY = 0)
+        assertEquals(100, report[7].toInt() and 0xFF)
+        assertEquals(0, report[8].toInt() and 0xFF)
+    }
+
+    @Test
+    fun `buildReport negative tilt Y`() {
+        val report = HidDescriptor.buildReport(false, false, false, 0, 0, 0, tiltX = 0, tiltY = -50)
+        // -50 in 16-bit LE = 0xCE, 0xFF
+        val ty = (report[9].toInt() and 0xFF) or ((report[10].toInt() and 0xFF) shl 8)
+        val signed = if (ty > 32767) ty - 65536 else ty
+        assertEquals(-50, signed)
+    }
+
+    @Test
+    fun `buildReport tilt clamped to max`() {
+        val report = HidDescriptor.buildReport(false, false, false, 0, 0, 0, tiltX = 999, tiltY = -999)
+        val tx = (report[7].toInt() and 0xFF) or ((report[8].toInt() and 0xFF) shl 8)
+        val ty = (report[9].toInt() and 0xFF) or ((report[10].toInt() and 0xFF) shl 8)
+        val signedTy = if (ty > 32767) ty - 65536 else ty
+        assertEquals(HidDescriptor.TILT_MAX, tx)
+        assertEquals(-HidDescriptor.TILT_MAX, signedTy)
+    }
+
+    // ---- Keyboard keycodes ----
+
+    @Test
+    fun `buildKeyboardReport with keycode`() {
+        val report = HidDescriptor.buildKeyboardReport(HidDescriptor.MOD_LEFT_CTRL, HidDescriptor.KEY_Z)
+        assertEquals(HidDescriptor.MOD_LEFT_CTRL.toByte(), report[0])
+        assertEquals(0, report[1].toInt()) // reserved
+        assertEquals(HidDescriptor.KEY_Z.toByte(), report[2])
+    }
+
+    @Test
+    fun `buildKeyboardReport with multiple keycodes`() {
+        val report = HidDescriptor.buildKeyboardReport(0, HidDescriptor.KEY_Z, HidDescriptor.KEY_Y)
+        assertEquals(HidDescriptor.KEY_Z.toByte(), report[2])
+        assertEquals(HidDescriptor.KEY_Y.toByte(), report[3])
+        assertEquals(0, report[4].toInt()) // no more keys
+    }
+
+    @Test
+    fun `buildKeyboardReport max 6 keycodes`() {
+        val report = HidDescriptor.buildKeyboardReport(0, 1, 2, 3, 4, 5, 6, 7, 8)
+        assertEquals(6.toByte(), report[7]) // 7th keycode (index 6+2=8) should NOT be set
+        // Actually bytes 2-7 = 6 slots: 1,2,3,4,5,6. 7 and 8 are dropped
+        assertEquals(1.toByte(), report[2])
+        assertEquals(6.toByte(), report[7])
+    }
 }

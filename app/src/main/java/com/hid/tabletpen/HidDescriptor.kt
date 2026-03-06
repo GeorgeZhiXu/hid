@@ -8,6 +8,8 @@ package com.hid.tabletpen
  *   Byte 1-2: X (uint16 LE, 0–32767)
  *   Byte 3-4: Y (uint16 LE, 0–32767)
  *   Byte 5-6: Pressure (uint16 LE, 0–4095)
+ *   Byte 7-8: Tilt X (int16 LE, -255–255)
+ *   Byte 9-10: Tilt Y (int16 LE, -255–255)
  *
  * Report ID 2 — Mouse (4 bytes):
  *   Byte 0: [0:Left][1:Right][2:Middle][3-7:padding]
@@ -18,7 +20,7 @@ package com.hid.tabletpen
 object HidDescriptor {
 
     const val REPORT_ID_DIGITIZER: Int = 1
-    const val DIGITIZER_REPORT_SIZE: Int = 7
+    const val DIGITIZER_REPORT_SIZE: Int = 11
 
     const val REPORT_ID_MOUSE: Int = 2
     const val MOUSE_REPORT_SIZE: Int = 4
@@ -32,9 +34,16 @@ object HidDescriptor {
     const val MOD_LEFT_ALT: Int = 0x04
     const val MOD_LEFT_GUI: Int = 0x08
 
+    // HID keyboard keycodes
+    const val KEY_Z: Int = 0x1D
+    const val KEY_Y: Int = 0x1C
+    const val KEY_LBRACKET: Int = 0x2F  // [ (brush smaller in Photoshop)
+    const val KEY_RBRACKET: Int = 0x30  // ] (brush larger in Photoshop)
+
     const val X_MAX: Int = 32767
     const val Y_MAX: Int = 32767
     const val PRESSURE_MAX: Int = 4095
+    const val TILT_MAX: Int = 255
 
     val DESCRIPTOR: ByteArray = bytes(
         // ===== DIGITIZER PEN (Report ID 1) =====
@@ -84,6 +93,15 @@ object HidDescriptor {
         0x05, 0x0D,       // Usage Page (Digitizer)
         0x09, 0x30,       // Usage (Tip Pressure)
         0x26, 0xFF, 0x0F, // Logical Maximum (4095)
+        0x81, 0x02,       // Input (Data, Variable, Absolute)
+
+        // --- Tilt X, Y: 16 bits signed each ---
+        0x09, 0x3D,       // Usage (X Tilt)
+        0x09, 0x3E,       // Usage (Y Tilt)
+        0x16, 0x01, 0xFF, // Logical Minimum (-255)
+        0x26, 0xFF, 0x00, // Logical Maximum (255)
+        0x75, 0x10,       // Report Size (16)
+        0x95, 0x02,       // Report Count (2)
         0x81, 0x02,       // Input (Data, Variable, Absolute)
 
         0xC0,             // End Collection (Physical)
@@ -174,7 +192,9 @@ object HidDescriptor {
         x: Int,
         y: Int,
         pressure: Int,
-        eraser: Boolean = false
+        eraser: Boolean = false,
+        tiltX: Int = 0,
+        tiltY: Int = 0
     ): ByteArray {
         var buttons = 0
         if (tipDown) buttons = buttons or 0x01
@@ -186,6 +206,9 @@ object HidDescriptor {
         val cy = y.coerceIn(0, Y_MAX)
         val cp = pressure.coerceIn(0, PRESSURE_MAX)
 
+        val tx = tiltX.coerceIn(-TILT_MAX, TILT_MAX)
+        val ty = tiltY.coerceIn(-TILT_MAX, TILT_MAX)
+
         return byteArrayOf(
             buttons.toByte(),
             (cx and 0xFF).toByte(),
@@ -193,7 +216,11 @@ object HidDescriptor {
             (cy and 0xFF).toByte(),
             (cy shr 8).toByte(),
             (cp and 0xFF).toByte(),
-            (cp shr 8).toByte()
+            (cp shr 8).toByte(),
+            (tx and 0xFF).toByte(),
+            (tx shr 8 and 0xFF).toByte(),
+            (ty and 0xFF).toByte(),
+            (ty shr 8 and 0xFF).toByte()
         )
     }
 
@@ -218,10 +245,13 @@ object HidDescriptor {
         )
     }
 
-    fun buildKeyboardReport(modifiers: Int): ByteArray {
+    fun buildKeyboardReport(modifiers: Int, vararg keycodes: Int): ByteArray {
         return ByteArray(KEYBOARD_REPORT_SIZE).also {
-            it[0] = modifiers.toByte()  // modifier keys
-            // bytes 1-7 are 0 (reserved + no key codes)
+            it[0] = modifiers.toByte()
+            // it[1] = 0 (reserved)
+            for (i in keycodes.indices) {
+                if (i < 6) it[i + 2] = keycodes[i].toByte()
+            }
         }
     }
 
