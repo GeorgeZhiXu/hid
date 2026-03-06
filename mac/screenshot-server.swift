@@ -256,27 +256,35 @@ class ScreenshotServer: NSObject, IOBluetoothRFCOMMChannelDelegate {
     private func scanForTabletPen() {
         if channel != nil { return }
 
-        guard let devices = IOBluetoothDevice.pairedDevices() as? [IOBluetoothDevice] else {
+        guard let allDevices = IOBluetoothDevice.pairedDevices() as? [IOBluetoothDevice] else {
             print("No paired devices"); exit(1)
         }
 
-        // Filter: only try devices matching name filter, or all if no filter
-        let candidates: [IOBluetoothDevice]
-        if let name = targetName {
-            candidates = devices.filter { ($0.name ?? "").localizedCaseInsensitiveContains(name) }
-        } else {
-            candidates = devices
+        // Deduplicate by address (macOS lists some devices multiple times)
+        var seen = Set<String>()
+        var devices = [IOBluetoothDevice]()
+        for d in allDevices {
+            let addr = d.addressString ?? ""
+            if !addr.isEmpty && !seen.contains(addr) {
+                seen.insert(addr)
+                devices.append(d)
+            }
         }
 
-        if candidates.isEmpty {
+        // Filter by name if specified
+        if let name = targetName {
+            devices = devices.filter { ($0.name ?? "").localizedCaseInsensitiveContains(name) }
+        }
+
+        if devices.isEmpty {
             print("No candidates found. Retrying in 5s...")
             DispatchQueue.main.asyncAfter(deadline: .now() + 5) { self.start() }
             return
         }
 
         // Find devices with TabletPen SDP service
-        print("Scanning \(candidates.count) devices for TabletPen service...")
-        findTabletPenDevices(candidates, index: 0, found: [])
+        print("Scanning \(devices.count) devices for TabletPen service...")
+        findTabletPenDevices(devices, index: 0, found: [])
     }
 
     /// SDP scan to collect all devices with TabletPen service, then try connecting
@@ -289,9 +297,21 @@ class ScreenshotServer: NSObject, IOBluetoothRFCOMMChannelDelegate {
                 print("No TabletPen devices found. Retrying in 5s...")
                 DispatchQueue.main.asyncAfter(deadline: .now() + 5) { self.start() }
             } else {
-                // Try connecting to each TabletPen device
-                print("Found TabletPen on \(found.count) device(s)")
-                tryConnectList(found, index: 0)
+                // Sort: put last-connected device first
+                var sorted = found
+                if let lastAddr = self.lastDeviceAddress {
+                    sorted.sort { a, b in
+                        let aMatch = a.0.addressString == lastAddr
+                        let bMatch = b.0.addressString == lastAddr
+                        if aMatch && !bMatch { return true }
+                        if !aMatch && bMatch { return false }
+                        return false
+                    }
+                }
+                for (dev, ch) in sorted {
+                    print("  \(dev.name ?? "?") ch=\(ch)\(dev.addressString == self.lastDeviceAddress ? " (last connected)" : "")")
+                }
+                tryConnectList(sorted, index: 0)
             }
             return
         }
