@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.8.0 (2026-03-06)
+
+### Features
+- **ScreenCaptureKit streaming** — 22+ FPS (was 8 FPS) on macOS 12.3+, ~100ms screenshot (was ~300ms)
+- Automatic fallback to `screencapture` subprocess on older macOS
+- Persistent SCStream keeps latest frame buffered for instant grab
+
 ## v0.7.0 (2026-03-06)
 
 ### Features

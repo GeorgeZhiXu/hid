@@ -40,6 +40,7 @@ The app uses Android's `BluetoothHidDevice` API to register the tablet as a stan
 - **Eraser support** — pen eraser tool sends HID eraser events to drawing apps
 - **Pen tilt** — X/Y tilt data for brush angle in Photoshop, Krita
 - **Keyboard shortcuts** — Undo, Redo, Brush size buttons on tablet toolbar
+- **ScreenCaptureKit** — 22+ FPS streaming on macOS 12.3+ (auto-fallback to screencapture on older macOS)
 - **Auto-connect** — remembers last paired laptop and reconnects on app launch
 - **Settings** — all preferences saved and persisted across sessions
 

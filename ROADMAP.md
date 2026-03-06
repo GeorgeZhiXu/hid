@@ -34,7 +34,7 @@ Implementation: Android sends ocus:x,y,w,h\n\ over RFCOMM/WiFi before \screensh
 
 ## Mid-term
 
-### ScreenCaptureKit streaming
+### ~~ScreenCaptureKit streaming~~ (Implemented v0.8.0)
 Replace `screencapture` subprocess with macOS ScreenCaptureKit for lower-latency continuous capture. Could improve stream FPS from ~8 to 30+.
 
 **Design principle:** Detect at runtime whether ScreenCaptureKit is available (macOS 12.3+). If yes, use it for ~30 FPS streaming and ~16ms screenshot latency. If no, fall back to `screencapture` subprocess (current approach, works on macOS 10.x+). The server should auto-select the best available method without user configuration.

@@ -1,6 +1,13 @@
 import Foundation
 import IOBluetooth
 import ImageIO
+import CoreMedia
+import VideoToolbox
+import CoreVideo
+
+#if canImport(ScreenCaptureKit)
+import ScreenCaptureKit
+#endif
 
 setbuf(stdout, nil)
 
@@ -11,10 +18,162 @@ let wifiPort: UInt16 = 9877
 
 let kServiceUUID = "A5D3E9F0-7B1C-4C2E-9F3A-B8C1D2E4F6A7"
 
-// MARK: - Shared capture function
+// MARK: - ScreenCaptureKit (macOS 12.3+) with legacy fallback
+
+let useScreenCaptureKit: Bool = {
+    let v = ProcessInfo.processInfo.operatingSystemVersion
+    return v.majorVersion >= 13 || (v.majorVersion == 12 && v.minorVersion >= 3)
+}()
+
+var sckCapture: AnyObject? = nil  // type-erased SCKCapture
+
+#if canImport(ScreenCaptureKit)
+@available(macOS 12.3, *)
+class SCKCapture: NSObject, SCStreamOutput, SCStreamDelegate {
+    private var stream: SCStream?
+    private var latestBuffer: CVPixelBuffer?
+    private let lock = NSLock()
+    private var running = false
+
+    func start() async throws {
+        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        guard let display = content.displays.first else {
+            throw NSError(domain: "SCK", code: 1, userInfo: [NSLocalizedDescriptionKey: "No display found"])
+        }
+
+        let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
+        let config = SCStreamConfiguration()
+        config.width = display.width
+        config.height = display.height
+        config.minimumFrameInterval = CMTime(value: 1, timescale: 30) // 30 FPS max
+        config.queueDepth = 3
+        config.showsCursor = true
+        config.pixelFormat = kCVPixelFormatType_32BGRA
+
+        stream = SCStream(filter: filter, configuration: config, delegate: self)
+        try stream!.addStreamOutput(self, type: .screen, sampleHandlerQueue: .global(qos: .userInteractive))
+        try await stream!.startCapture()
+        running = true
+    }
+
+    func stop() async {
+        running = false
+        try? await stream?.stopCapture()
+        stream = nil
+    }
+
+    func grabFrame() -> CVPixelBuffer? {
+        lock.lock()
+        let buf = latestBuffer
+        lock.unlock()
+        return buf
+    }
+
+    // SCStreamOutput — called on every frame by the system
+    func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
+                of type: SCStreamOutputType) {
+        guard type == .screen else { return }
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        lock.lock()
+        latestBuffer = pixelBuffer
+        lock.unlock()
+    }
+
+    // SCStreamDelegate — handle errors
+    func stream(_ stream: SCStream, didStopWithError error: Error) {
+        print("SCK stream error: \(error.localizedDescription)")
+        running = false
+    }
+}
+#endif
+
+// MARK: - Shared JPEG encoding (used by both SCK and legacy paths)
+
+func encodeJPEG(_ image: CGImage, quality: Int?, maxDim: Int?) -> (data: Data, width: Int, height: Int)? {
+    // Create in-memory image source for resizing
+    let mutableData = NSMutableData()
+    guard let tempDest = CGImageDestinationCreateWithData(mutableData, "public.png" as CFString, 1, nil) else { return nil }
+    CGImageDestinationAddImage(tempDest, image, nil)
+    guard CGImageDestinationFinalize(tempDest) else { return nil }
+
+    guard let source = CGImageSourceCreateWithData(mutableData, nil) else { return nil }
+
+    let thumbOpts: [CFString: Any] = [
+        kCGImageSourceThumbnailMaxPixelSize: maxDim ?? maxDimension,
+        kCGImageSourceCreateThumbnailFromImageAlways: true,
+        kCGImageSourceCreateThumbnailWithTransform: true
+    ]
+    guard let thumb = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbOpts as CFDictionary) else { return nil }
+
+    let outData = NSMutableData()
+    guard let dest = CGImageDestinationCreateWithData(outData, "public.jpeg" as CFString, 1, nil) else { return nil }
+    CGImageDestinationAddImage(dest, thumb, [
+        kCGImageDestinationLossyCompressionQuality: Double(quality ?? jpegQuality) / 100.0
+    ] as CFDictionary)
+    guard CGImageDestinationFinalize(dest) else { return nil }
+
+    return (outData as Data, thumb.width, thumb.height)
+}
+
+func cropCGImage(_ image: CGImage, region: (x: Double, y: Double, w: Double, h: Double)) -> CGImage {
+    let rx = Int(region.x * Double(image.width))
+    let ry = Int(region.y * Double(image.height))
+    let rw = Int(region.w * Double(image.width))
+    let rh = Int(region.h * Double(image.height))
+    let rect = CGRect(x: rx, y: ry, width: rw, height: rh)
+    return image.cropping(to: rect) ?? image
+}
+
+// MARK: - ScreenCaptureKit capture path
+
+@available(macOS 12.3, *)
+func captureScreenSCK(quality: Int? = nil, maxDim: Int? = nil,
+                       region: (x: Double, y: Double, w: Double, h: Double)? = nil) -> (data: Data, width: Int, height: Int)? {
+    guard let capture = sckCapture as? SCKCapture else { return nil }
+    guard let pixelBuffer = capture.grabFrame() else { return nil }
+
+    let t0 = CFAbsoluteTimeGetCurrent()
+
+    var cgImage: CGImage?
+    VTCreateCGImageFromCVPixelBuffer(pixelBuffer, options: nil, imageOut: &cgImage)
+    guard var image = cgImage else { return nil }
+    let t1 = CFAbsoluteTimeGetCurrent()
+
+    if let r = region {
+        image = cropCGImage(image, region: r)
+    }
+
+    guard let result = encodeJPEG(image, quality: quality, maxDim: maxDim) else { return nil }
+    let t2 = CFAbsoluteTimeGetCurrent()
+
+    let convertMs = Int((t1 - t0) * 1000)
+    let encodeMs = Int((t2 - t1) * 1000)
+    print("  [SCK] convert:\(convertMs)ms encode:\(encodeMs)ms \(result.width)x\(result.height) \(result.data.count/1024)KB")
+
+    return result
+}
+
+// MARK: - Capture dispatcher
 
 func captureScreen(quality: Int? = nil, maxDim: Int? = nil,
                    region: (x: Double, y: Double, w: Double, h: Double)? = nil) -> (data: Data, width: Int, height: Int)? {
+    #if canImport(ScreenCaptureKit)
+    if useScreenCaptureKit, sckCapture != nil {
+        if #available(macOS 12.3, *) {
+            if let result = captureScreenSCK(quality: quality, maxDim: maxDim, region: region) {
+                return result
+            }
+            // SCK failed, fall through to legacy
+        }
+    }
+    #endif
+    return captureScreenLegacy(quality: quality, maxDim: maxDim, region: region)
+}
+
+// MARK: - Legacy capture (screencapture subprocess)
+
+func captureScreenLegacy(quality: Int? = nil, maxDim: Int? = nil,
+                         region: (x: Double, y: Double, w: Double, h: Double)? = nil) -> (data: Data, width: Int, height: Int)? {
     let t0 = CFAbsoluteTimeGetCurrent()
 
     let jpgPath = "/tmp/tabletpen-ss.jpg"
@@ -578,6 +737,29 @@ class ScreenshotServer: NSObject, IOBluetoothRFCOMMChannelDelegate {
 // MARK: - Main
 
 startWifiServer()
+
+// Initialize ScreenCaptureKit if available
+#if canImport(ScreenCaptureKit)
+if useScreenCaptureKit {
+    if #available(macOS 12.3, *) {
+        let capture = SCKCapture()
+        sckCapture = capture
+        Task {
+            do {
+                try await capture.start()
+                print("ScreenCaptureKit: active (30+ FPS capable)")
+            } catch {
+                print("ScreenCaptureKit unavailable: \(error.localizedDescription) — using screencapture fallback")
+                sckCapture = nil
+            }
+        }
+    }
+} else {
+    print("macOS < 12.3 — using screencapture fallback")
+}
+#else
+print("ScreenCaptureKit not available — using screencapture fallback")
+#endif
 
 let server = ScreenshotServer()
 

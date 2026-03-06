@@ -247,7 +247,7 @@ else
     fail "Screenshot not received (check logcat)"
 fi
 
-if grep -q "capture:" "$SERVER_LOG" 2>/dev/null; then
+if grep -qE "capture:|\[SCK\]" "$SERVER_LOG" 2>/dev/null; then
     CAPTURE=$(grep "capture:" "$SERVER_LOG" | tail -1)
     pass "Mac capture: $CAPTURE"
 else
