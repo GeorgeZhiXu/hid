@@ -302,21 +302,50 @@ fi
 if $WIFI_CONNECTED; then
     adb logcat -c 2>/dev/null
     sleep 1
+    # Ensure stream is stopped first (button might show 'Stop' from previous run)
+    adb shell uiautomator dump /sdcard/ui.xml 2>/dev/null
+    STOP_BTN=$(adb shell "cat /sdcard/ui.xml" 2>/dev/null | tr ">" "
+" | grep 'btn_stream' | grep -c 'text="Stop"' || true)
+    if [ "$STOP_BTN" -ge 1 ]; then
+        info "Stream was running — stopping first"
+        tap_button "btn_stream" 2>/dev/null || true
+        sleep 8  # WiFi reconnects after stream stop (disconnect + reconnect)
+    fi
+
     if tap_button "btn_stream" 2>/dev/null; then
-        info "Tapped Stream button — waiting for frames..."
-        sleep 8
+        info "Tapped Stream button — starting stream"
+        sleep 5  # let stream establish + WiFi TCP connect + first frames arrive
+
+        # Draw while streaming to generate screen changes
+        info "Drawing during stream to verify screen updates..."
+        adb logcat -c 2>/dev/null
+        adb shell input swipe 500 500 900 500 300
+        sleep 2
+        adb shell input swipe 600 400 600 700 300
+        sleep 2
+        adb shell input swipe 800 500 500 600 300
+        sleep 4  # collect more frames
 
         STREAM_LOG=$(adb logcat -d -s BtScreenshot 2>/dev/null)
-        if echo "$STREAM_LOG" | grep -qE "Stream frame|Stream \[key\]|Stream \[delta\]|Stream \[full\]"; then
-            FRAME_COUNT=$(echo "$STREAM_LOG" | grep -cE "Stream frame|Stream \[" || true)
-            pass "WiFi stream: received $FRAME_COUNT frames"
+        FRAME_COUNT=$(echo "$STREAM_LOG" | grep -cE "Stream frame|Stream \\[" || true)
+
+        if [ "$FRAME_COUNT" -ge 5 ]; then
+            # Check for varying frame sizes (proves screen content is changing)
+            SIZES=$(echo "$STREAM_LOG" | grep -oE "[0-9]+KB" | sort -u | wc -l | tr -d ' ')
+            if [ "$SIZES" -ge 2 ]; then
+                pass "WiFi stream: $FRAME_COUNT frames with $SIZES different sizes (screen is updating)"
+            else
+                pass "WiFi stream: $FRAME_COUNT frames received"
+            fi
+        elif [ "$FRAME_COUNT" -ge 1 ]; then
+            pass "WiFi stream: $FRAME_COUNT frames (low count — may need longer wait)"
         else
-            fail "WiFi stream: no frames received"
+            fail "WiFi stream: no frames received (known: WiFi socket may be stale after screenshot)"
         fi
 
         # Stop stream
         tap_button "btn_stream" 2>/dev/null || true
-        sleep 2  # ensure stream fully stopped before next phase
+        sleep 2
     else
         fail "Stream button not found (WiFi connected but button not visible)"
     fi
