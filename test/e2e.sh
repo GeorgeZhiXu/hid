@@ -319,7 +319,7 @@ if $RECONNECTED; then
     adb logcat -c 2>/dev/null
     sleep 2
     tap_button "btn_screenshot" 2>/dev/null || adb shell input tap 987 114
-    sleep 12
+    sleep 15
 
     RECON_LOG=$(adb logcat -d -s BtScreenshot 2>/dev/null)
     if echo "$RECON_LOG" | grep -qE "(BT|WiFi) .+KB.*total:"; then
