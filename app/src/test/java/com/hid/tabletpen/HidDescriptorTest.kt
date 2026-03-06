@@ -226,6 +226,45 @@ class HidDescriptorTest {
     }
 
     @Test
+    fun `new keycodes have correct values`() {
+        assertEquals(0x16, HidDescriptor.KEY_S)
+        assertEquals(0x06, HidDescriptor.KEY_C)
+        assertEquals(0x19, HidDescriptor.KEY_V)
+        assertEquals(0x1B, HidDescriptor.KEY_X)
+        assertEquals(0x04, HidDescriptor.KEY_A)
+        assertEquals(0x08, HidDescriptor.KEY_E)
+        assertEquals(0x05, HidDescriptor.KEY_B)
+        assertEquals(0x2C, HidDescriptor.KEY_SPACE)
+        assertEquals(0x2B, HidDescriptor.KEY_TAB)
+    }
+
+    @Test
+    fun `buildKeyboardReport Ctrl+Z for undo`() {
+        val report = HidDescriptor.buildKeyboardReport(HidDescriptor.MOD_LEFT_CTRL, HidDescriptor.KEY_Z)
+        assertEquals(HidDescriptor.MOD_LEFT_CTRL.toByte(), report[0])
+        assertEquals(HidDescriptor.KEY_Z.toByte(), report[2])
+    }
+
+    @Test
+    fun `buildKeyboardReport Ctrl+Shift+Z for redo`() {
+        val mods = HidDescriptor.MOD_LEFT_CTRL or HidDescriptor.MOD_LEFT_SHIFT
+        val report = HidDescriptor.buildKeyboardReport(mods, HidDescriptor.KEY_Z)
+        assertEquals(mods.toByte(), report[0])
+        assertEquals(HidDescriptor.KEY_Z.toByte(), report[2])
+    }
+
+    @Test
+    fun `buildReport with all features combined`() {
+        val report = HidDescriptor.buildReport(
+            tipDown = true, barrel = true, inRange = true,
+            x = 16000, y = 8000, pressure = 2048,
+            eraser = true, tiltX = 100, tiltY = -50
+        )
+        assertEquals(11, report.size)
+        assertEquals(0x0F, report[0].toInt() and 0xFF)  // all 4 bits set
+    }
+
+    @Test
     fun `buildKeyboardReport max 6 keycodes`() {
         val report = HidDescriptor.buildKeyboardReport(0, 1, 2, 3, 4, 5, 6, 7, 8)
         assertEquals(6.toByte(), report[7]) // 7th keycode (index 6+2=8) should NOT be set

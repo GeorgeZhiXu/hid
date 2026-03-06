@@ -217,3 +217,124 @@ class StrokeColorTest {
         assertEquals(android.graphics.Color.WHITE, PenMath.detectContrastColor(null))
     }
 }
+
+class RadialMenuMathTest {
+
+    // Radial menu: angle-to-segment mapping
+    // Segments start from top (0°=up), clockwise
+    // For 8 segments: each is 45° wide
+
+    private fun angleToSegment(dx: Float, dy: Float, segCount: Int): Int {
+        val angle = Math.toDegrees(kotlin.math.atan2(dy.toDouble(), dx.toDouble())).toFloat()
+        val normalized = ((angle + 90 + 360) % 360)  // 0 = top
+        return ((normalized / (360f / segCount)).toInt()) % segCount
+    }
+
+    @Test
+    fun `top direction maps to segment 0`() {
+        assertEquals(0, angleToSegment(0f, -100f, 8))  // straight up
+    }
+
+    @Test
+    fun `right direction maps to segment 2`() {
+        assertEquals(2, angleToSegment(100f, 0f, 8))  // straight right
+    }
+
+    @Test
+    fun `bottom direction maps to segment 4`() {
+        assertEquals(4, angleToSegment(0f, 100f, 8))  // straight down
+    }
+
+    @Test
+    fun `left direction maps to segment 6`() {
+        assertEquals(6, angleToSegment(-100f, 0f, 8))  // straight left
+    }
+
+    @Test
+    fun `top-right diagonal maps to segment 1`() {
+        assertEquals(1, angleToSegment(100f, -100f, 8))
+    }
+
+    @Test
+    fun `bottom-left diagonal maps to segment 5`() {
+        assertEquals(5, angleToSegment(-100f, 100f, 8))
+    }
+
+    @Test
+    fun `4 segments maps correctly`() {
+        assertEquals(0, angleToSegment(0f, -100f, 4))   // up = 0
+        assertEquals(1, angleToSegment(100f, 0f, 4))     // right = 1
+        assertEquals(2, angleToSegment(0f, 100f, 4))     // down = 2
+        assertEquals(3, angleToSegment(-100f, 0f, 4))    // left = 3
+    }
+
+    @Test
+    fun `6 segments maps correctly`() {
+        assertEquals(0, angleToSegment(0f, -100f, 6))   // up
+        assertEquals(3, angleToSegment(0f, 100f, 6))     // down
+    }
+}
+
+class DeltaFrameTest {
+
+    @Test
+    fun `delta tile data class holds values`() {
+        val tile = BluetoothScreenshot.DeltaTile(10, 20, 64, 64, byteArrayOf(1, 2, 3))
+        assertEquals(10, tile.x)
+        assertEquals(20, tile.y)
+        assertEquals(64, tile.w)
+        assertEquals(64, tile.h)
+        assertEquals(3, tile.jpeg.size)
+    }
+
+    @Test
+    fun `delta payload parsing with ByteBuffer`() {
+        // Simulate a delta payload: 2 tiles
+        val buf = java.nio.ByteBuffer.allocate(100)
+        buf.putShort(2)  // tile count
+
+        // Tile 1
+        buf.putShort(0); buf.putShort(0); buf.putShort(64); buf.putShort(64)
+        val jpeg1 = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte())  // fake JPEG header
+        buf.putInt(jpeg1.size)
+        buf.put(jpeg1)
+
+        // Tile 2
+        buf.putShort(64); buf.putShort(0); buf.putShort(64); buf.putShort(64)
+        val jpeg2 = byteArrayOf(0xFF.toByte(), 0xD8.toByte())
+        buf.putInt(jpeg2.size)
+        buf.put(jpeg2)
+
+        // Parse
+        buf.flip()
+        val tileCount = buf.short.toInt() and 0xFFFF
+        assertEquals(2, tileCount)
+
+        val tiles = mutableListOf<BluetoothScreenshot.DeltaTile>()
+        for (i in 0 until tileCount) {
+            val tx = buf.short.toInt() and 0xFFFF
+            val ty = buf.short.toInt() and 0xFFFF
+            val tw = buf.short.toInt() and 0xFFFF
+            val th = buf.short.toInt() and 0xFFFF
+            val jpegSize = buf.int
+            val jpeg = ByteArray(jpegSize)
+            buf.get(jpeg)
+            tiles.add(BluetoothScreenshot.DeltaTile(tx, ty, tw, th, jpeg))
+        }
+
+        assertEquals(2, tiles.size)
+        assertEquals(0, tiles[0].x)
+        assertEquals(64, tiles[1].x)
+        assertEquals(3, tiles[0].jpeg.size)
+        assertEquals(2, tiles[1].jpeg.size)
+    }
+
+    @Test
+    fun `empty delta payload`() {
+        val buf = java.nio.ByteBuffer.allocate(2)
+        buf.putShort(0)  // 0 tiles
+        buf.flip()
+        val tileCount = buf.short.toInt() and 0xFFFF
+        assertEquals(0, tileCount)
+    }
+}

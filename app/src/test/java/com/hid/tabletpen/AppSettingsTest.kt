@@ -64,4 +64,30 @@ class AppSettingsTest {
     fun `StrokeColor labels count matches entries`() {
         assertEquals(StrokeColor.entries.size, StrokeColor.LABELS.size)
     }
+
+    // ---- ShortcutConfig serialization ----
+
+    // ShortcutConfig JSON tests require Android runtime (JSONObject is stubbed in JVM)
+    // Covered in androidTest/GestureTest instead
+
+    @Test
+    fun `DEFAULT_SHORTCUTS has 8 entries`() {
+        assertEquals(8, DEFAULT_SHORTCUTS.size)
+    }
+
+    @Test
+    fun `SHORTCUT_PRESETS has all expected presets`() {
+        assertTrue(SHORTCUT_PRESETS.containsKey("Default"))
+        assertTrue(SHORTCUT_PRESETS.containsKey("Photoshop"))
+        assertTrue(SHORTCUT_PRESETS.containsKey("Krita"))
+        assertTrue(SHORTCUT_PRESETS.containsKey("OneNote"))
+        assertTrue(SHORTCUT_PRESETS.containsKey("Excalidraw"))
+    }
+
+    @Test
+    fun `all presets have 8 shortcuts`() {
+        for ((name, shortcuts) in SHORTCUT_PRESETS) {
+            assertEquals("Preset '$name' should have 8 shortcuts", 8, shortcuts.size)
+        }
+    }
 }

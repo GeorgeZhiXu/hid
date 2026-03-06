@@ -106,6 +106,35 @@ class GestureTest {
     }
 
     @Test
+    fun longPressForRadialMenu_nocrash() {
+        // Long press (>500ms) should trigger radial menu
+        // Hold finger still on draw pad area
+        device.swipe(700, 500, 700, 500, 200)  // 200 steps = ~2s hold
+        Thread.sleep(500)
+        assertEquals("com.hid.tabletpen", device.currentPackageName)
+    }
+
+    @Test
+    fun radialMenuDragAndRelease_nocrash() {
+        // Long press to open radial menu, drag to a segment, release
+        device.swipe(700, 500, 700, 500, 150)  // hold to trigger menu
+        Thread.sleep(100)
+        device.swipe(700, 500, 800, 400, 10)   // drag to a segment
+        Thread.sleep(500)
+        assertEquals("com.hid.tabletpen", device.currentPackageName)
+    }
+
+    @Test
+    fun shortcutButtonTap_nocrash() {
+        // Tap on the shortcut toolbar area (top of screen)
+        device.click(200, 120)  // first shortcut button area
+        Thread.sleep(200)
+        device.click(400, 120)  // second shortcut button area
+        Thread.sleep(200)
+        assertEquals("com.hid.tabletpen", device.currentPackageName)
+    }
+
+    @Test
     fun edgeOfScreen_nocrash() {
         // Tap near edges — boundary conditions
         device.click(10, 10)      // top-left corner
