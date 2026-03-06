@@ -216,6 +216,10 @@ class MainActivity : AppCompatActivity(),
     private fun handleMouseEvent(event: DrawPadView.MouseEvent) {
         if (!hidManager.isConnected) return
 
+        if (event.leftButton || event.rightButton) {
+            android.util.Log.d("HidMouse", "left=${event.leftButton} right=${event.rightButton} scroll=${event.scroll}")
+        }
+
         if (event.horizontalScroll != 0f) {
             // Horizontal scroll: Shift + scroll wheel (macOS convention)
             hidManager.sendKeyboardReport(HidDescriptor.MOD_LEFT_SHIFT)

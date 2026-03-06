@@ -158,6 +158,20 @@ else
     info "Check: Is tablet BT HID-paired with this Mac?"
 fi
 
+# Test: single finger tap → click (cursor should NOT move)
+info "Testing single finger tap (click, not drag)..."
+adb shell input swipe 800 600 600 500 300  # move cursor to known position
+sleep 1
+POS_TAP_BEFORE=$(get_mouse_pos)
+adb shell input tap 700 500  # quick tap on draw pad
+sleep 1
+POS_TAP_AFTER=$(get_mouse_pos)
+if [ "$POS_TAP_BEFORE" = "$POS_TAP_AFTER" ]; then
+    pass "Single finger tap: cursor stayed (click detected, not drag)"
+else
+    fail "Single finger tap: cursor moved $POS_TAP_BEFORE → $POS_TAP_AFTER (should be click, not drag)"
+fi
+
 # ==== PHASE 5: START MAC SERVER + BT SCREENSHOT ====
 
 info "--- BT Screenshot Test ---"
