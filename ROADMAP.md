@@ -108,6 +108,30 @@ Support multiple languages for the settings UI. Currently English-only.
 
 
 
+
+### Follow system orientation
+Currently the app forces `sensorLandscape` orientation. Should follow the system orientation setting instead, so the user can use the tablet in any orientation without manually overriding in Settings. When the tablet rotates, the drawing area and aspect ratio mapping should adjust automatically. The HID coordinate mapping (0-32767 range) should account for the current orientation so the Mac cursor follows correctly regardless of how the tablet is held.
+
+### Maximize drawing area — adaptive GUI
+The toolbar and shortcut buttons consume valuable screen space. Ideas:
+- **Auto-hide toolbar** — toolbar slides away after 3s of inactivity, reappears on tap near the edge or 3-finger swipe
+- **Minimal mode** — single floating button that expands on tap, showing all controls. Drawing area fills the entire screen.
+- **Orientation-adaptive layout** — in portrait, toolbar moves to the side (vertical strip). In landscape, stays at the top (current). Shortcut buttons wrap to fit available space.
+- **Dynamic button sizing** — on smaller screens or in portrait, reduce button text size and padding. On larger screens, add more visible shortcuts.
+- **Edge swipe gestures** — swipe from left edge = settings, right edge = screenshot, top edge = toolbar toggle. No permanent UI needed.
+- **Status bar in drawing area** — move the connection/mode status into a tiny overlay on the drawing canvas instead of a separate toolbar row.
+
+### Multi-monitor support
+Let the user select which Mac monitor to capture and map the drawing area to. Implementation:
+- **Mac server**: enumerate displays via `CGGetActiveDisplayList` or ScreenCaptureKit's `SCShareableContent.displays`. Send display list to tablet: `"displays:2 main=0 1920x1080 ext=1 2560x1440
+"`.
+- **Tablet UI**: dropdown or setting to select which display to use. Default = main display.
+- **Coordinate mapping**: HID digitizer coordinates (0-32767) map to the selected display's pixel range, not the combined virtual desktop. This means the pen only controls one monitor at a time.
+- **Screenshot/stream**: capture only the selected display. ScreenCaptureKit supports per-display capture via `SCContentFilter(display:)`.
+- **Focus mode**: works within the selected display's bounds.
+- **Display switching**: could add a shortcut button or gesture to switch between displays without opening settings.
+- **Spanning mode** (future): optionally map the drawing area across all monitors as one large canvas. The pen moves across monitors like a physical Wacom Intuos Pro mapped to the full desktop. Useful for presentations but less precise for drawing.
+
 ### Whiteboard app optimization
 Whiteboard apps (Microsoft Whiteboard, OneNote, macOS Preview/Notes, Google Keep, Excalidraw) have different needs than drawing apps:
 
