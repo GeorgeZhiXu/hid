@@ -133,12 +133,25 @@ fi
 
 # ---- Step 7: Trigger screenshot ----
 info "Triggering screenshot via adb..."
-# Clear logcat first
 adb logcat -c 2>/dev/null
-# Tap the Screenshot button (approximate coordinates — adjust for your device)
-# Using am broadcast or direct command instead for reliability:
-adb shell input tap 500 40  # approximate location of Screenshot button
-sleep 8  # wait for BT screenshot transfer
+# Find Screenshot button bounds from UI dump and tap center
+adb shell uiautomator dump /sdcard/ui.xml 2>/dev/null
+BOUNDS=$(adb shell "cat /sdcard/ui.xml" 2>/dev/null | tr '>' '\n' | grep 'btn_screenshot' | grep -o 'bounds="\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]"' | head -1)
+if [ -n "$BOUNDS" ]; then
+    # Parse [left,top][right,bottom] → tap center
+    X1=$(echo "$BOUNDS" | grep -o '\[[0-9]*,' | head -1 | tr -d '[,')
+    Y1=$(echo "$BOUNDS" | grep -o ',[0-9]*\]' | head -1 | tr -d ',]')
+    X2=$(echo "$BOUNDS" | grep -o '\[[0-9]*,' | tail -1 | tr -d '[,')
+    Y2=$(echo "$BOUNDS" | grep -o ',[0-9]*\]' | tail -1 | tr -d ',]')
+    CX=$(( (X1 + X2) / 2 ))
+    CY=$(( (Y1 + Y2) / 2 ))
+    info "Tapping Screenshot button at ($CX, $CY)"
+    adb shell input tap $CX $CY
+else
+    info "Button not found via UI dump, tapping approximate location"
+    adb shell input tap 987 114
+fi
+sleep 10  # wait for BT screenshot transfer
 
 # ---- Step 8: Check screenshot result ----
 LOGCAT=$(adb logcat -d -s BtScreenshot 2>/dev/null)
