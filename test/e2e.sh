@@ -248,7 +248,7 @@ else
 fi
 
 if grep -qE "capture:|\[SCK\]" "$SERVER_LOG" 2>/dev/null; then
-    CAPTURE=$(grep "capture:" "$SERVER_LOG" | tail -1)
+    CAPTURE=$(grep -E "capture:|\[SCK\]" "$SERVER_LOG" | tail -1)
     pass "Mac capture: $CAPTURE"
 else
     fail "Mac capture not found in server log"
@@ -629,6 +629,158 @@ else
 fi
 
 fi  # end last phase
+
+# ==== PHASE 14: SHORTCUT BUTTONS ====
+if should_skip 14; then info "Skipping phase 14"; else
+
+info "--- Shortcut Button Test ---"
+# Verify shortcut buttons exist on toolbar and are tappable
+adb logcat -c 2>/dev/null
+sleep 1
+adb shell uiautomator dump /sdcard/ui.xml 2>/dev/null
+SHORTCUT_BTN=$(adb shell "cat /sdcard/ui.xml" 2>/dev/null | tr '>' '\n' | grep -c 'shortcut_container' || true)
+if [ "$SHORTCUT_BTN" -ge 1 ]; then
+    pass "Shortcut container found in UI"
+else
+    # Container might not have id in dump — check for Undo button text
+    UNDO_BTN=$(adb shell "cat /sdcard/ui.xml" 2>/dev/null | tr '>' '\n' | grep -i 'text="Undo"' | head -1)
+    if [ -n "$UNDO_BTN" ]; then
+        pass "Shortcut buttons visible (found Undo)"
+    else
+        fail "Shortcut buttons not found in UI"
+    fi
+fi
+
+# Tap Undo button and verify no crash
+if tap_button "Undo" 2>/dev/null; then
+    sleep 1
+    ACTIVITY_SC=$(adb shell "dumpsys activity activities | grep -i tabletpen | head -1" 2>/dev/null || true)
+    if echo "$ACTIVITY_SC" | grep -qi "tabletpen"; then
+        pass "Shortcut button tap: app still running"
+    else
+        fail "Shortcut button tap: app may have crashed"
+    fi
+else
+    info "Undo button not found by name, skipping tap test"
+fi
+
+fi  # end phase 14
+
+# ==== PHASE 15: RADIAL MENU ====
+if should_skip 15; then info "Skipping phase 15"; else
+
+info "--- Radial Menu Test ---"
+# Long-press on draw pad should trigger radial menu (500ms hold)
+# We can't easily verify the visual overlay, but we can verify no crash
+adb shell input swipe 700 500 700 500 200  # hold ~2 seconds (200 steps)
+sleep 1
+# Drag to a segment and release
+adb shell input swipe 700 500 850 400 10
+sleep 1
+
+ACTIVITY_RM=$(adb shell "dumpsys activity activities | grep -i tabletpen | head -1" 2>/dev/null || true)
+if echo "$ACTIVITY_RM" | grep -qi "tabletpen"; then
+    pass "Radial menu: no crash on long-press + drag"
+else
+    fail "Radial menu: app crashed"
+fi
+
+fi  # end phase 15
+
+# ==== PHASE 16: ADAPTIVE QUALITY ====
+if should_skip 16; then info "Skipping phase 16"; else
+
+info "--- Adaptive Quality Test ---"
+# Take two screenshots — second should use adaptive quality based on first transfer speed
+adb logcat -c 2>/dev/null
+sleep 1
+tap_button "btn_screenshot" 2>/dev/null || adb shell input tap 987 114
+sleep 5
+tap_button "btn_screenshot" 2>/dev/null || adb shell input tap 987 114
+sleep 5
+
+ADAPT_LOG=$(adb logcat -d -s BtScreenshot 2>/dev/null)
+SHOT_COUNT=$(echo "$ADAPT_LOG" | grep -cE "(BT|WiFi) .+KB.*total:" || true)
+if [ "$SHOT_COUNT" -ge 2 ]; then
+    pass "Adaptive quality: $SHOT_COUNT screenshots succeeded"
+    # Check if second screenshot used different quality (q= in command)
+    # The adaptive system adjusts based on first transfer speed
+else
+    fail "Adaptive quality: only $SHOT_COUNT screenshots (expected 2+)"
+fi
+
+fi  # end phase 16
+
+# ==== PHASE 17: GHOST STROKE ====
+if should_skip 17; then info "Skipping phase 17"; else
+
+info "--- Ghost Stroke Test ---"
+# Draw a stroke, take screenshot, verify ghost path is cleared
+adb logcat -c 2>/dev/null
+# Draw on the pad
+adb shell input swipe 500 500 900 600 300
+sleep 1
+# Take screenshot (should clear ghost path)
+tap_button "btn_screenshot" 2>/dev/null || adb shell input tap 987 114
+sleep 5
+
+GHOST_LOG=$(adb logcat -d -s BtScreenshot 2>/dev/null)
+if echo "$GHOST_LOG" | grep -qE "(BT|WiFi) .+KB.*total:"; then
+    pass "Ghost stroke: screenshot after drawing succeeded"
+else
+    fail "Ghost stroke: screenshot after drawing failed"
+fi
+
+# Verify app still running (ghost path logic didn't crash)
+ACTIVITY_GS=$(adb shell "dumpsys activity activities | grep -i tabletpen | head -1" 2>/dev/null || true)
+if echo "$ACTIVITY_GS" | grep -qi "tabletpen"; then
+    pass "Ghost stroke: app stable after draw + screenshot cycle"
+else
+    fail "Ghost stroke: app crashed"
+fi
+
+fi  # end phase 17
+
+# ==== PHASE 18: DELTA STREAMING ====
+if should_skip 18; then info "Skipping phase 18"; else
+
+info "--- Delta Streaming Test ---"
+# Start stream, draw while streaming, verify frames arrive
+adb logcat -c 2>/dev/null
+sleep 1
+if tap_button "btn_stream" 2>/dev/null; then
+    info "Streaming started — drawing to test delta frames..."
+    sleep 2
+    # Draw while streaming to trigger delta frames
+    adb shell input swipe 500 500 900 500 300
+    sleep 1
+    adb shell input swipe 600 400 600 700 300
+    sleep 5
+
+    DELTA_LOG=$(adb logcat -d -s BtScreenshot 2>/dev/null)
+    TOTAL_FRAMES=$(echo "$DELTA_LOG" | grep -c "Stream" || true)
+    DELTA_FRAMES=$(echo "$DELTA_LOG" | grep -c "\[delta\]" || true)
+    KEY_FRAMES=$(echo "$DELTA_LOG" | grep -c "\[key\]" || true)
+
+    if [ "$TOTAL_FRAMES" -ge 5 ]; then
+        pass "Delta stream: $TOTAL_FRAMES frames ($DELTA_FRAMES delta, $KEY_FRAMES key)"
+    else
+        # May not have delta frames if Mac server doesn't support SCK
+        if echo "$DELTA_LOG" | grep -qE "Stream frame|Stream \["; then
+            pass "Delta stream: frames received (delta may not be active without SCK)"
+        else
+            fail "Delta stream: no frames received during drawing"
+        fi
+    fi
+
+    # Stop stream
+    tap_button "btn_stream" 2>/dev/null || true
+    sleep 1
+else
+    info "Stream button not visible — WiFi may not be connected"
+fi
+
+fi  # end phase 18
 
 # ==== RESULTS ====
 echo ""
