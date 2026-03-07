@@ -322,22 +322,33 @@ class TestH264Streaming:
             pytest.skip("No streaming frames in server log")
 
     def test_h264_tablet_receives_frames(self, adb: Adb, bt_connected: ScreenshotServer):
-        """Tablet should receive and decode H.264 or JPEG stream frames."""
+        """Tablet should receive, decode H.264 frames, and display changing content."""
         import subprocess as sp
+
+        # Ensure app is in foreground and stream button is available
+        adb.launch_app()
+        time.sleep(3)
         adb.shell("uiautomator dump /sdcard/ui.xml")
         xml = adb.shell("cat /sdcard/ui.xml")
         if "btn_stream" not in xml:
             pytest.skip("Stream button not visible")
 
+        # Stop any existing stream
         if 'text="Stop"' in xml:
             adb.tap_button("btn_stream")
             time.sleep(5)
+
+        # Take a screenshot first to warm up WiFi, then close cleanly
+        # This ensures the WiFi handler cycles back to accept()
+        take_screenshot(adb, timeout=10)
+        time.sleep(2)
 
         adb.clear_logcat()
         time.sleep(1)
         if not adb.tap_button("btn_stream"):
             pytest.skip("Stream button not found")
 
+        # Open TextEdit to trigger screen changes
         sp.run(["osascript", "-e", '''
             tell app "TextEdit" to activate
             tell app "System Events" to tell process "TextEdit"
@@ -358,15 +369,24 @@ class TestH264Streaming:
         adb.tap_button("btn_stream")
         time.sleep(2)
 
-        if total == 0:
-            # Check if ECONNREFUSED (WiFi socket consumed by prior test)
-            if "ECONNREFUSED" in log or "connect failed" in log:
-                pytest.skip("WiFi connection unavailable (consumed by prior test)")
-        assert total >= 5, f"Too few frames: {total} (h264={h264_count}, jpeg={jpeg_count})"
+        if total == 0 and ("ECONNREFUSED" in log or "connect failed" in log):
+            pytest.skip("WiFi connection unavailable")
+
+        assert total >= 5, f"Too few frames: {total} (h264={h264_count}, jpeg={jpeg_count}). Log:\n{log[:500]}"
+
         if h264_count > 0:
-            print(f"  Tablet decoded {h264_count} H.264 frames")
+            errors = len(re.findall(r"YUV.*failed|decode.*error", log, re.IGNORECASE))
+            assert errors == 0, f"H.264 decode had {errors} errors"
+            # Verify content changed via hashes
+            unique_hashes = set(re.findall(r"hash=([a-f0-9]+)", log))
+            none_count = log.count("hash=none")
+            decoded = h264_count - none_count
+            print(f"  Tablet: {h264_count} H.264 frames, {decoded} decoded to bitmap, {len(unique_hashes)} unique hashes")
+            assert decoded >= 5, f"Too few decoded bitmaps ({decoded}/{h264_count})"
+            assert len(unique_hashes) >= 2, f"Content not changing — only {len(unique_hashes)} unique hashes"
+            print(f"  Content verified: screen changed during H.264 stream")
         else:
-            print(f"  Tablet received {jpeg_count} JPEG frames (H.264 decode may not be active)")
+            print(f"  Tablet received {jpeg_count} JPEG frames")
 
 
 class TestDeltaStreaming:

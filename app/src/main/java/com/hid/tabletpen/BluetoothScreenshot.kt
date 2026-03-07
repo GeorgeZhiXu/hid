@@ -588,7 +588,7 @@ class BluetoothScreenshot(private val context: Context) {
     private fun drainH264Frame(codec: MediaCodec, bufferInfo: MediaCodec.BufferInfo): Bitmap? {
         var bitmap: Bitmap? = null
         while (true) {
-            val outputIndex = codec.dequeueOutputBuffer(bufferInfo, 0)
+            val outputIndex = codec.dequeueOutputBuffer(bufferInfo, 10000)  // 10ms timeout
             if (outputIndex >= 0) {
                 if (bufferInfo.size > 0) {
                     // Use getOutputImage for proper YUV plane access (API 21+)
@@ -761,14 +761,26 @@ class BluetoothScreenshot(private val context: Context) {
 
                         // Feed NAL data to decoder
                         feedH264Data(h264Decoder!!, frame, h264BufferInfo!!)
-                        // Drain decoded frames
-                        val bitmap = drainH264Frame(h264Decoder!!, h264BufferInfo!!)
+                        // Drain decoded frame — may need a short wait for hardware decode
+                        var bitmap = drainH264Frame(h264Decoder!!, h264BufferInfo!!)
+                        if (bitmap == null) {
+                            // Hardware decode not ready yet — wait briefly and retry
+                            Thread.sleep(5)
+                            bitmap = drainH264Frame(h264Decoder!!, h264BufferInfo!!)
+                        }
 
                         val t2 = System.currentTimeMillis()
                         frameCount++
                         val elapsed = (t2 - startTime) / 1000.0
                         val fps = if (elapsed > 0) frameCount / elapsed else 0.0
-                        Log.d(TAG, "Stream [h264] #$frameCount ${frame.size/1024}KB recv:${t1-t0}ms decode:${t2-t1}ms fps:${"%.1f".format(fps)}")
+                        val hash = if (bitmap != null && bitmap.width > 10 && bitmap.height > 10) {
+                            val p1 = bitmap.getPixel(bitmap.width / 4, bitmap.height / 4)
+                            val p2 = bitmap.getPixel(bitmap.width * 3 / 4, bitmap.height / 4)
+                            val p3 = bitmap.getPixel(bitmap.width / 4, bitmap.height * 3 / 4)
+                            val p4 = bitmap.getPixel(bitmap.width * 3 / 4, bitmap.height * 3 / 4)
+                            "%08x%08x%08x%08x".format(p1, p2, p3, p4)
+                        } else "none"
+                        Log.d(TAG, "Stream [h264] #$frameCount ${frame.size/1024}KB recv:${t1-t0}ms decode:${t2-t1}ms fps:${"%.1f".format(fps)} hash=$hash")
                         if (bitmap != null) {
                             mainHandler.post { listener?.onStreamFrame(bitmap) }
                         }
