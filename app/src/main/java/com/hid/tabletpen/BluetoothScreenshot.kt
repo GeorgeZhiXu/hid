@@ -503,8 +503,7 @@ class BluetoothScreenshot(private val context: Context) {
     // ---- H.264 decoder state ----
     private var h264Decoder: MediaCodec? = null
     private var h264BufferInfo: MediaCodec.BufferInfo? = null
-    private var h264ImageReader: ImageReader? = null
-    private var h264LatestBitmap: Bitmap? = null
+    @Volatile private var h264LatestBitmap: Bitmap? = null
 
     private fun findNalUnits(data: ByteArray): List<Pair<Int, Int>> {
         // Reuse logic from StreamReceiver — find Annex B start codes
@@ -580,21 +579,20 @@ class BluetoothScreenshot(private val context: Context) {
                 codec.queueInputBuffer(inputIndex, 0, chunkSize, System.nanoTime() / 1000, 0)
                 pos += chunkSize
             }
-            // Drain any available output
-            drainH264Frame(codec, bufferInfo)
+            // Drain any available output — store in h264LatestBitmap
+            drainH264Outputs(codec, bufferInfo)
         }
     }
 
-    private fun drainH264Frame(codec: MediaCodec, bufferInfo: MediaCodec.BufferInfo): Bitmap? {
-        var bitmap: Bitmap? = null
+    /** Drain all available decoded frames, store the latest bitmap in h264LatestBitmap */
+    private fun drainH264Outputs(codec: MediaCodec, bufferInfo: MediaCodec.BufferInfo) {
         while (true) {
-            val outputIndex = codec.dequeueOutputBuffer(bufferInfo, 10000)  // 10ms timeout
+            val outputIndex = codec.dequeueOutputBuffer(bufferInfo, 0)  // non-blocking
             if (outputIndex >= 0) {
                 if (bufferInfo.size > 0) {
-                    // Use getOutputImage for proper YUV plane access (API 21+)
                     val image = codec.getOutputImage(outputIndex)
                     if (image != null) {
-                        bitmap = yuvImageToBitmap(image)
+                        h264LatestBitmap = yuvImageToBitmap(image)
                         image.close()
                     }
                 }
@@ -605,7 +603,27 @@ class BluetoothScreenshot(private val context: Context) {
                 break
             }
         }
-        return bitmap
+    }
+
+    /** Drain with timeout — used after feeding to ensure we get the latest frame */
+    private fun drainH264WithTimeout(codec: MediaCodec, bufferInfo: MediaCodec.BufferInfo): Bitmap? {
+        // First drain any immediately available
+        drainH264Outputs(codec, bufferInfo)
+        if (h264LatestBitmap != null) return h264LatestBitmap
+
+        // Wait briefly for hardware decode to finish
+        val outputIndex = codec.dequeueOutputBuffer(bufferInfo, 15000)  // 15ms timeout
+        if (outputIndex >= 0) {
+            if (bufferInfo.size > 0) {
+                val image = codec.getOutputImage(outputIndex)
+                if (image != null) {
+                    h264LatestBitmap = yuvImageToBitmap(image)
+                    image.close()
+                }
+            }
+            codec.releaseOutputBuffer(outputIndex, false)
+        }
+        return h264LatestBitmap
     }
 
     /** Convert YUV_420_888 Image from MediaCodec to ARGB Bitmap */
@@ -660,8 +678,7 @@ class BluetoothScreenshot(private val context: Context) {
         try { h264Decoder?.release() } catch (_: Exception) {}
         h264Decoder = null
         h264BufferInfo = null
-        h264ImageReader?.close()
-        h264ImageReader = null
+        h264LatestBitmap = null
     }
 
     fun stopStream() {
@@ -759,15 +776,11 @@ class BluetoothScreenshot(private val context: Context) {
                             }
                         }
 
-                        // Feed NAL data to decoder
+                        // Feed NAL data to decoder (also drains outputs into h264LatestBitmap)
+                        h264LatestBitmap = null
                         feedH264Data(h264Decoder!!, frame, h264BufferInfo!!)
-                        // Drain decoded frame — may need a short wait for hardware decode
-                        var bitmap = drainH264Frame(h264Decoder!!, h264BufferInfo!!)
-                        if (bitmap == null) {
-                            // Hardware decode not ready yet — wait briefly and retry
-                            Thread.sleep(5)
-                            bitmap = drainH264Frame(h264Decoder!!, h264BufferInfo!!)
-                        }
+                        // Get latest decoded frame (may wait up to 15ms for hardware)
+                        val bitmap = drainH264WithTimeout(h264Decoder!!, h264BufferInfo!!)
 
                         val t2 = System.currentTimeMillis()
                         frameCount++
