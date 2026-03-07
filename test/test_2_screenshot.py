@@ -61,7 +61,7 @@ class TestStreaming:
         adb.clear_logcat()
         time.sleep(1)
         assert adb.tap_button("btn_stream"), "Stream button not found"
-        time.sleep(12)
+        time.sleep(15)  # WiFi TCP connection + first frames need time
 
         # Draw while streaming to generate screen changes
         adb.swipe(500, 500, 900, 500, 300)

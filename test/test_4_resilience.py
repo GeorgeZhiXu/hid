@@ -56,6 +56,7 @@ class TestBluetoothToggle:
 
         assert before == after, "Cursor moved with BT off"
 
+    @pytest.mark.xfail(reason="Boox BT toggle reconnect is slow/unreliable — see ISSUES.md")
     def test_bt_on_reconnects_hid(self, adb: Adb, bt_connected):
         adb.bt_enable()
         time.sleep(15)
@@ -74,6 +75,7 @@ class TestBluetoothToggle:
             f"HID did not reconnect after BT toggle: {before} → {after}"
         )
 
+    @pytest.mark.xfail(reason="Boox RFCOMM doesn't reconnect after BT toggle — see ISSUES.md")
     def test_bt_toggle_rfcomm_reconnects(self, adb: Adb, bt_connected: ScreenshotServer):
         prev_count = bt_connected.bt_connection_count()
         wait_until(

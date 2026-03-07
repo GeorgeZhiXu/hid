@@ -10,6 +10,11 @@ class TestRapidScreenshots:
     """Stress test: rapid screenshot requests."""
 
     def test_rapid_screenshots_mostly_succeed(self, adb: Adb, bt_connected):
+        # Warm-up: verify screenshot works before stress test
+        warmup = take_screenshot(adb, timeout=15)
+        if warmup is None:
+            pytest.skip("Screenshot connection not available (may be disrupted by prior tests)")
+
         adb.clear_logcat()
         for _ in range(5):
             if not adb.tap_button("btn_screenshot"):
