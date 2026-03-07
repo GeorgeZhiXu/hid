@@ -60,7 +60,7 @@ class SCKCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         config.width = display.width
         config.height = display.height
         config.minimumFrameInterval = CMTime(value: 1, timescale: 30) // 30 FPS max
-        config.queueDepth = 3
+        config.queueDepth = 8
         config.showsCursor = true
         config.pixelFormat = kCVPixelFormatType_32BGRA
 
