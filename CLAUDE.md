@@ -40,7 +40,10 @@ Follow these 5 phases for every task:
 
 ### Phase 4: Testing
 - Run unit tests: `./gradlew test`
-- Run E2E tests: `PATH="$PATH:/opt/homebrew/share/android-commandlinetools/platform-tools" ./test/e2e.sh`
+- Run instrumented tests: `./gradlew connectedDebugAndroidTest`
+- Run E2E tests: `python3 -m pytest test/ -v` (requires tablet USB + BT paired with Mac)
+- Run specific E2E module: `python3 -m pytest test/test_hid_input.py -v`
+- Legacy E2E shell script (deprecated): `./test/e2e.sh`
 - For Mac changes: rebuild with `cd mac && ./build.sh`
 - Verify the specific fix manually if E2E doesn't cover it
 
@@ -73,8 +76,11 @@ ANDROID_HOME=/opt/homebrew/share/android-commandlinetools ./gradlew test
 # Mac screenshot server
 cd mac && swiftc -framework IOBluetooth -framework Foundation -framework ImageIO screenshot-server.swift -o screenshot-server
 
-# E2E test (requires tablet via USB + BT paired)
-PATH="$PATH:/opt/homebrew/share/android-commandlinetools/platform-tools" ./test/e2e.sh
+# E2E tests (requires tablet via USB + BT paired with Mac)
+python3 -m pytest test/ -v
+
+# Instrumented tests (requires tablet via USB)
+ANDROID_HOME=/opt/homebrew/share/android-commandlinetools ./gradlew connectedDebugAndroidTest
 ```
 
 ## Key Technical Details
@@ -113,12 +119,18 @@ PATH="$PATH:/opt/homebrew/share/android-commandlinetools/platform-tools" ./test/
 - `AppSettingsTest` — enums, aspect ratios
 - `UpdateCheckerTest` — semver comparison
 
-### E2E Tests (13 phases, requires tablet + Mac)
-1-4: Build, unit tests, install, HID input
-5-7: BT screenshot, WiFi screenshot, WiFi stream
-8: Edge cases (server kill, reconnect)
-9-11: BT toggle, app kill, sleep/wake reconnect
-12-13: Stress test, HID latency measurement
+### Instrumented Tests (21 tests, requires tablet via USB)
+- `GestureTest` (11) — crash tests for drag, tap, scroll, long-press, radial menu, shortcuts
+- `TwoFingerTapTest` (10) — functional assertions: two-finger tap→right-click, single tap→left-click, drag→mouse move, scroll, jitter tolerance
+
+### E2E Tests (26 tests, requires tablet USB + BT paired with Mac)
+Python pytest suite in `test/`:
+- `test_hid_input.py` — cursor movement, tap-click, latency measurement
+- `test_screenshot.py` — BT/WiFi screenshot, streaming, delta compression
+- `test_resilience.py` — server kill/restart, BT toggle, app kill, sleep/wake
+- `test_stress.py` — rapid screenshots, adaptive quality, ghost stroke, shortcuts, radial menu
+
+Legacy: `test/e2e.sh` (deprecated bash script, same coverage)
 
 ## Common Pitfalls
 - `socket.isConnected` is unreliable on BT after sleep — always handle broken pipe
