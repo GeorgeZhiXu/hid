@@ -171,6 +171,7 @@ class MainActivity : AppCompatActivity(),
         }
         btScreenshot.startServer()
         btScreenshot.screenshotQuality = settings.screenshotQuality
+        btScreenshot.streamMethod = settings.streamMethod
         btScreenshot.streamQuality = settings.streamQuality
 
         applySettingsToDrawPad()
@@ -459,6 +460,29 @@ class MainActivity : AppCompatActivity(),
         }
         layout.addView(ssQualitySpinner)
 
+        // Stream method
+        layout.addView(TextView(this).apply { text = "Stream Method"; setPadding(0, 16, 0, 4) })
+        val streamMethodDesc = TextView(this).apply {
+            text = settings.streamMethod.description
+            setTextColor(android.graphics.Color.GRAY)
+            textSize = 11f
+            setTypeface(null, android.graphics.Typeface.ITALIC)
+            setPadding(0, 4, 0, 8)
+        }
+        val streamMethodSpinner = Spinner(this).apply {
+            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item,
+                StreamMethod.LABELS)
+            setSelection(settings.streamMethod.ordinal)
+            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(parent: AdapterView<*>?, view: View?, pos: Int, id: Long) {
+                    streamMethodDesc.text = StreamMethod.entries[pos].description
+                }
+                override fun onNothingSelected(parent: AdapterView<*>?) {}
+            }
+        }
+        layout.addView(streamMethodSpinner)
+        layout.addView(streamMethodDesc)
+
         // Stream quality
         layout.addView(TextView(this).apply { text = "Stream Quality"; setPadding(0, 16, 0, 4) })
         val streamQualitySpinner = Spinner(this).apply {
@@ -633,12 +657,14 @@ class MainActivity : AppCompatActivity(),
                     autoRecapture = recaptureCheck.isChecked,
                     showGhostStroke = ghostCheck.isChecked,
                     screenshotQuality = CaptureQuality.entries[ssQualitySpinner.selectedItemPosition],
+                    streamMethod = StreamMethod.entries[streamMethodSpinner.selectedItemPosition],
                     streamQuality = CaptureQuality.entries[streamQualitySpinner.selectedItemPosition],
                     autoSwitchPreset = autoSwitchCheck.isChecked,
                     shortcuts = SHORTCUT_PRESETS[presetNames[presetSpinner.selectedItemPosition]] ?: DEFAULT_SHORTCUTS
                 )
                 AppSettings.save(this, settings)
                 btScreenshot.screenshotQuality = settings.screenshotQuality
+                btScreenshot.streamMethod = settings.streamMethod
                 btScreenshot.streamQuality = settings.streamQuality
                 applySettingsToDrawPad()
                 setupShortcutButtons()

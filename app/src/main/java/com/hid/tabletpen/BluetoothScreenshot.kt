@@ -119,14 +119,29 @@ class BluetoothScreenshot(private val context: Context) {
 
     var screenshotQuality: CaptureQuality = CaptureQuality.AUTO
     var streamQuality: CaptureQuality = CaptureQuality.AUTO
+    var streamMethod: StreamMethod = StreamMethod.AUTO
 
     private fun buildCommand(base: String): String {
         val preset = if (base == "stream") streamQuality else screenshotQuality
         val (quality, maxDim) = PenMath.resolveQuality(preset, lastTransferMs, lastTransferBytes)
         val sb = StringBuilder(base)
         sb.append(" q=$quality max=$maxDim")
-        if (base == "stream" && focusRect == null) {
-            sb.append(" codec=h264")
+        if (base == "stream") {
+            when (streamMethod) {
+                StreamMethod.AUTO -> {
+                    // Use H.264 only on slow networks, JPEG otherwise
+                    val bytesPerSec = if (lastTransferMs > 0 && lastTransferBytes > 0)
+                        lastTransferBytes * 1000L / lastTransferMs else Long.MAX_VALUE
+                    if (bytesPerSec < 100_000 && focusRect == null) {
+                        sb.append(" codec=h264")
+                    }
+                }
+                StreamMethod.JPEG_PUSH -> { /* default codec=jpeg, no param needed */ }
+                StreamMethod.H264 -> {
+                    if (focusRect == null) sb.append(" codec=h264")
+                }
+                StreamMethod.LEGACY -> sb.append(" codec=legacy")
+            }
         }
         focusRect?.let { r ->
             sb.append(" r=%.3f,%.3f,%.3f,%.3f".format(r.left, r.top, r.right, r.bottom))

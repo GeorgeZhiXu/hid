@@ -3,8 +3,9 @@
 ## v1.3.0 (2026-03-07)
 
 ### Features
-- **H.264 hardware encoding for streaming** — Mac encodes via VideoToolbox VTCompressionSession. Frames are 3-5KB (30-60x smaller than JPEG). Protocol type byte `0x03` with Annex B NAL units. Falls back to JPEG for focus/region or when H.264 unavailable.
-- **H.264 hardware decoding on tablet** — Android MediaCodec decodes H.264, converts YUV→Bitmap via Image planes. Content changes verified with 7 unique hashes in E2E test.
+- **H.264 hardware encoding** — Mac VideoToolbox at 3-5KB/frame (30-60x smaller than JPEG). Android MediaCodec + RenderScript decode. Protocol type 0x03 with Annex B NAL units.
+- **Stream Method setting** — choose Auto, JPEG (Recommended), H.264 Video, or Legacy with descriptions explaining tradeoffs. Auto selects JPEG on fast WiFi, H.264 on slow networks.
+- **Configurable stream settings with tooltips** — each option shows description text explaining performance characteristics and when to use it.
 
 ### Fixes
 - **WiFi socket close command** — Android sends `"close\n"` before closing WiFi socket, so Mac handler returns to `accept()` cleanly for stream connection.

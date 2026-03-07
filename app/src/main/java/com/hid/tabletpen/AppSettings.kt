@@ -94,6 +94,21 @@ val SHORTCUT_PRESETS = mapOf(
     ),
 )
 
+enum class StreamMethod(val label: String, val description: String) {
+    AUTO("Auto",
+        "Best quality for your connection. Uses JPEG on fast WiFi, switches to H.264 on slow networks."),
+    JPEG_PUSH("JPEG (Recommended)",
+        "Highest FPS (25-29), lowest latency (<100ms). Uses ~10 MB/s bandwidth. Best for fast WiFi."),
+    H264("H.264 Video",
+        "Smallest data (30x less bandwidth). ~15 FPS, ~1s latency. Best for slow WiFi or mobile hotspot."),
+    LEGACY("Legacy",
+        "Fallback mode (~6 FPS). Uses screencapture subprocess. Use if other modes have issues.");
+
+    companion object {
+        val LABELS = entries.map { it.label }
+    }
+}
+
 enum class CaptureQuality(val label: String, val jpegQuality: Int, val maxDim: Int) {
     AUTO("Auto", 0, 0),           // adaptive based on network speed
     LOW("Low", 25, 960),           // BT-friendly
@@ -186,6 +201,7 @@ data class AppSettings(
     val autoRecapture: Boolean = false,
     val showGhostStroke: Boolean = true,
     val screenshotQuality: CaptureQuality = CaptureQuality.AUTO,
+    val streamMethod: StreamMethod = StreamMethod.AUTO,
     val streamQuality: CaptureQuality = CaptureQuality.AUTO,
     val autoSwitchPreset: Boolean = true,
     val shortcuts: List<ShortcutConfig> = DEFAULT_SHORTCUTS
@@ -209,6 +225,7 @@ data class AppSettings(
         private const val KEY_AUTO_RECAPTURE = "auto_recapture"
         private const val KEY_GHOST_STROKE = "ghost_stroke"
         private const val KEY_SCREENSHOT_QUALITY = "screenshot_quality"
+        private const val KEY_STREAM_METHOD = "stream_method"
         private const val KEY_STREAM_QUALITY = "stream_quality"
         private const val KEY_AUTO_SWITCH_PRESET = "auto_switch_preset"
         private const val KEY_SHORTCUTS = "shortcuts"
@@ -281,6 +298,7 @@ data class AppSettings(
                 autoRecapture = p.getBoolean(KEY_AUTO_RECAPTURE, false),
                 showGhostStroke = p.getBoolean(KEY_GHOST_STROKE, true),
                 screenshotQuality = CaptureQuality.entries.getOrElse(p.getInt(KEY_SCREENSHOT_QUALITY, 0)) { CaptureQuality.AUTO },
+                streamMethod = StreamMethod.entries.getOrElse(p.getInt(KEY_STREAM_METHOD, 0)) { StreamMethod.AUTO },
                 streamQuality = CaptureQuality.entries.getOrElse(p.getInt(KEY_STREAM_QUALITY, 0)) { CaptureQuality.AUTO },
                 autoSwitchPreset = p.getBoolean(KEY_AUTO_SWITCH_PRESET, true),
                 shortcuts = try {
@@ -312,6 +330,7 @@ data class AppSettings(
                 .putBoolean(KEY_AUTO_RECAPTURE, s.autoRecapture)
                 .putBoolean(KEY_GHOST_STROKE, s.showGhostStroke)
                 .putInt(KEY_SCREENSHOT_QUALITY, s.screenshotQuality.ordinal)
+                .putInt(KEY_STREAM_METHOD, s.streamMethod.ordinal)
                 .putInt(KEY_STREAM_QUALITY, s.streamQuality.ordinal)
                 .putBoolean(KEY_AUTO_SWITCH_PRESET, s.autoSwitchPreset)
                 .putString(KEY_SHORTCUTS, org.json.JSONArray(s.shortcuts.map { it.toJson() }).toString())

@@ -923,10 +923,11 @@ func handleWifiClient(fd: Int32) {
                 let totalMs = Int((CFAbsoluteTimeGetCurrent() - t0) * 1000)
                 print("WiFi screenshot: \(frame.data.count/1024)KB q=\(params.quality ?? jpegQuality) total:\(totalMs)ms")
             } else if action == "stream" {
-                print("WiFi: streaming started")
+                print("WiFi: streaming started (codec=\(params.codec))")
                 var usedPush = false
                 #if canImport(ScreenCaptureKit)
-                if #available(macOS 12.3, *), let capture = sckCapture as? SCKCapture,
+                if params.codec != "legacy",
+                   #available(macOS 12.3, *), let capture = sckCapture as? SCKCapture,
                    capture.running {
                     // Push-model: SCK callback drives frame encoding + sending
                     print("WiFi: trying SCK push-model")
