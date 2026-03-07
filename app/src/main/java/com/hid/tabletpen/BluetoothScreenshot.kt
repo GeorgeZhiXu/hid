@@ -125,12 +125,9 @@ class BluetoothScreenshot(private val context: Context) {
         val (quality, maxDim) = PenMath.resolveQuality(preset, lastTransferMs, lastTransferBytes)
         val sb = StringBuilder(base)
         sb.append(" q=$quality max=$maxDim")
-        // H.264 encode is 18x smaller but Android decode-to-Bitmap needs work
-        // (YUV→ARGB conversion produces incorrect colors). Using JPEG push-model for now.
-        // TODO: enable when H.264 decode pipeline is fixed
-        // if (base == "stream" && focusRect == null) {
-        //     sb.append(" codec=h264")
-        // }
+        if (base == "stream" && focusRect == null) {
+            sb.append(" codec=h264")
+        }
         focusRect?.let { r ->
             sb.append(" r=%.3f,%.3f,%.3f,%.3f".format(r.left, r.top, r.right, r.bottom))
         }
@@ -593,29 +590,12 @@ class BluetoothScreenshot(private val context: Context) {
         while (true) {
             val outputIndex = codec.dequeueOutputBuffer(bufferInfo, 0)
             if (outputIndex >= 0) {
-                val outputBuffer = codec.getOutputBuffer(outputIndex)
-                if (outputBuffer != null && bufferInfo.size > 0) {
-                    // Get output format for dimensions
-                    val fmt = codec.outputFormat
-                    val width = fmt.getInteger(MediaFormat.KEY_WIDTH)
-                    val height = fmt.getInteger(MediaFormat.KEY_HEIGHT)
-                    val colorFormat = fmt.getInteger(MediaFormat.KEY_COLOR_FORMAT)
-
-                    // Convert YUV to Bitmap using Android's YuvImage
-                    val yuvBytes = ByteArray(bufferInfo.size)
-                    outputBuffer.position(bufferInfo.offset)
-                    outputBuffer.get(yuvBytes)
-
-                    try {
-                        val yuvImage = android.graphics.YuvImage(
-                            yuvBytes, android.graphics.ImageFormat.NV21, width, height, null
-                        )
-                        val out = java.io.ByteArrayOutputStream()
-                        yuvImage.compressToJpeg(android.graphics.Rect(0, 0, width, height), 90, out)
-                        val jpegBytes = out.toByteArray()
-                        bitmap = BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size)
-                    } catch (e: Exception) {
-                        Log.w(TAG, "H.264 YUV→Bitmap failed: ${e.message}")
+                if (bufferInfo.size > 0) {
+                    // Use getOutputImage for proper YUV plane access (API 21+)
+                    val image = codec.getOutputImage(outputIndex)
+                    if (image != null) {
+                        bitmap = yuvImageToBitmap(image)
+                        image.close()
                     }
                 }
                 codec.releaseOutputBuffer(outputIndex, false)
@@ -626,6 +606,53 @@ class BluetoothScreenshot(private val context: Context) {
             }
         }
         return bitmap
+    }
+
+    /** Convert YUV_420_888 Image from MediaCodec to ARGB Bitmap */
+    private fun yuvImageToBitmap(image: android.media.Image): Bitmap? {
+        val width = image.width
+        val height = image.height
+        val yPlane = image.planes[0]
+        val uPlane = image.planes[1]
+        val vPlane = image.planes[2]
+
+        val yBuffer = yPlane.buffer
+        val uBuffer = uPlane.buffer
+        val vBuffer = vPlane.buffer
+
+        val yRowStride = yPlane.rowStride
+        val uvRowStride = uPlane.rowStride
+        val uvPixelStride = uPlane.pixelStride
+
+        // Build NV21 byte array (Y plane + interleaved VU)
+        // YuvImage only supports NV21, so we need VU ordering
+        val nv21 = ByteArray(width * height * 3 / 2)
+
+        // Copy Y plane
+        var pos = 0
+        for (row in 0 until height) {
+            yBuffer.position(row * yRowStride)
+            yBuffer.get(nv21, pos, width)
+            pos += width
+        }
+
+        // Copy UV planes interleaved as VU (NV21 format)
+        for (row in 0 until height / 2) {
+            for (col in 0 until width / 2) {
+                val uvOffset = row * uvRowStride + col * uvPixelStride
+                vBuffer.position(uvOffset)
+                nv21[pos++] = vBuffer.get()
+                uBuffer.position(uvOffset)
+                nv21[pos++] = uBuffer.get()
+            }
+        }
+
+        val yuvImage = android.graphics.YuvImage(
+            nv21, android.graphics.ImageFormat.NV21, width, height, null
+        )
+        val out = java.io.ByteArrayOutputStream()
+        yuvImage.compressToJpeg(android.graphics.Rect(0, 0, width, height), 85, out)
+        return BitmapFactory.decodeByteArray(out.toByteArray(), 0, out.size())
     }
 
     private fun releaseH264Decoder() {
