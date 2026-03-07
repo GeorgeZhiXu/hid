@@ -57,11 +57,9 @@ class SCKCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 
         let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
         let config = SCStreamConfiguration()
-        // Capture at target streaming resolution — avoids expensive resize during encode
-        let scale = min(Double(maxDimension) / Double(display.width),
-                        Double(maxDimension) / Double(display.height))
-        config.width = Int(Double(display.width) * min(scale, 1.0))
-        config.height = Int(Double(display.height) * min(scale, 1.0))
+        // Capture at native display resolution — push model encodes directly, no resize
+        config.width = display.width
+        config.height = display.height
         config.minimumFrameInterval = CMTime(value: 1, timescale: 30) // 30 FPS max
         config.queueDepth = 8
         config.showsCursor = true
@@ -235,15 +233,23 @@ class SCKCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 
         let t1 = CFAbsoluteTimeGetCurrent()
 
-        // Full JPEG every frame — faster than delta (1 encode vs N tile encodes)
-        // and WiFi has enough bandwidth for 90KB × 30 FPS = 2.7 MB/s
-        let outData = NSMutableData()
-        guard let dest = CGImageDestinationCreateWithData(outData, "public.jpeg" as CFString, 1, nil) else { return }
-        CGImageDestinationAddImage(dest, image, [
-            kCGImageDestinationLossyCompressionQuality: Double(params.quality ?? jpegQuality) / 100.0
-        ] as CFDictionary)
-        guard CGImageDestinationFinalize(dest) else { return }
-        let frameData = outData as Data
+        // Encode JPEG — uses maxDim for resize if needed, or direct encode at native res
+        let maxDim = params.maxDim
+        let frameData: Data
+        if maxDim == nil || maxDim! >= max(image.width, image.height) {
+            // No resize needed — direct fast encode
+            let outData = NSMutableData()
+            guard let dest = CGImageDestinationCreateWithData(outData, "public.jpeg" as CFString, 1, nil) else { return }
+            CGImageDestinationAddImage(dest, image, [
+                kCGImageDestinationLossyCompressionQuality: Double(params.quality ?? jpegQuality) / 100.0
+            ] as CFDictionary)
+            guard CGImageDestinationFinalize(dest) else { return }
+            frameData = outData as Data
+        } else {
+            // Resize via encodeJPEG (slower but respects maxDim for lower quality settings)
+            guard let frame = encodeJPEG(image, quality: params.quality, maxDim: maxDim) else { return }
+            frameData = frame.data
+        }
         let t2 = CFAbsoluteTimeGetCurrent()
         if writeTypedFrame(type: 0x00, frameData, to: fd) {
             lock.lock()
