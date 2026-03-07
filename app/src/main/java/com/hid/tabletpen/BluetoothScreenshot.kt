@@ -440,6 +440,9 @@ class BluetoothScreenshot(private val context: Context) {
             return
         }
         if (streaming.getAndSet(true)) return
+        // Close existing screenshot WiFi socket so the server can accept the stream connection
+        try { wifiSocket?.close() } catch (_: Exception) {}
+        wifiSocket = null
         // Open a FRESH TCP connection for streaming (separate from screenshot socket)
         // This avoids socket state confusion when switching from request-response to push mode
         Thread({

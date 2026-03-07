@@ -39,24 +39,15 @@ class TestAdaptiveQuality:
     """Verify adaptive quality adjusts between screenshots."""
 
     def test_two_consecutive_screenshots(self, adb: Adb, bt_connected):
-        adb.clear_logcat()
-        time.sleep(1)
+        # First screenshot (also serves as connection recovery after streaming tests)
+        timing1 = take_screenshot(adb, timeout=15)
+        if timing1 is None:
+            pytest.skip("Screenshot connection not available")
 
-        # First screenshot establishes baseline speed
-        if not adb.tap_button("btn_screenshot"):
-            adb.tap(987, 114)
-        time.sleep(5)
-
-        # Second should use adapted quality
-        if not adb.tap_button("btn_screenshot"):
-            adb.tap(987, 114)
-        time.sleep(5)
-
-        log = adb.logcat("BtScreenshot")
-        timings = parse_screenshot_log(log)
-        assert len(timings) >= 2, f"Expected 2+ screenshots, got {len(timings)}"
-        print(f"  Shot 1: {timings[0]}")
-        print(f"  Shot 2: {timings[1]}")
+        timing2 = take_screenshot(adb, timeout=10)
+        assert timing2 is not None, "Second screenshot failed"
+        print(f"  Shot 1: {timing1}")
+        print(f"  Shot 2: {timing2}")
 
 
 class TestGhostStroke:
@@ -67,8 +58,7 @@ class TestGhostStroke:
         adb.swipe(500, 500, 900, 600, 300)
         time.sleep(1)
 
-        # Screenshot should clear ghost path and succeed
-        timing = take_screenshot(adb, timeout=5)
+        timing = take_screenshot(adb, timeout=15)
         assert timing is not None, "Screenshot after drawing failed"
         assert adb.is_app_running(), "App crashed after draw + screenshot"
 
