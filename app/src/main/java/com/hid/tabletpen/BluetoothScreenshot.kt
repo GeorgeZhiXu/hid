@@ -129,18 +129,17 @@ class BluetoothScreenshot(private val context: Context) {
         if (base == "stream") {
             when (streamMethod) {
                 StreamMethod.AUTO -> {
-                    // Use H.264 only on slow networks, JPEG otherwise
                     val bytesPerSec = if (lastTransferMs > 0 && lastTransferBytes > 0)
                         lastTransferBytes * 1000L / lastTransferMs else Long.MAX_VALUE
                     if (bytesPerSec < 100_000 && focusRect == null) {
                         sb.append(" codec=h264")
                     }
                 }
-                StreamMethod.JPEG_PUSH -> { /* default codec=jpeg, no param needed */ }
-                StreamMethod.H264 -> {
+                StreamMethod.SCK_JPEG -> { /* default: SCK push with JPEG */ }
+                StreamMethod.SCK_H264 -> {
                     if (focusRect == null) sb.append(" codec=h264")
                 }
-                StreamMethod.LEGACY -> sb.append(" codec=legacy")
+                StreamMethod.SCREENCAPTURE -> sb.append(" codec=legacy")
             }
         }
         focusRect?.let { r ->

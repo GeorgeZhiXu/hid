@@ -96,13 +96,13 @@ val SHORTCUT_PRESETS = mapOf(
 
 enum class StreamMethod(val label: String, val description: String) {
     AUTO("Auto",
-        "Best quality for your connection. Uses JPEG on fast WiFi, switches to H.264 on slow networks."),
-    JPEG_PUSH("JPEG (Recommended)",
-        "Highest FPS (25-29), lowest latency (<100ms). Uses ~10 MB/s bandwidth. Best for fast WiFi."),
-    H264("H.264 Video",
-        "Smallest data (30x less bandwidth). ~15 FPS, ~1s latency. Best for slow WiFi or mobile hotspot."),
-    LEGACY("Legacy",
-        "Fallback mode (~6 FPS). Uses screencapture subprocess. Use if other modes have issues.");
+        "Picks the best method for your connection. SCK JPEG on fast WiFi, SCK H.264 on slow networks."),
+    SCK_JPEG("SCK + JPEG (WiFi)",
+        "ScreenCaptureKit push-model, JPEG encoding. 25-29 FPS, <100ms latency, ~10 MB/s. Best for fast WiFi."),
+    SCK_H264("SCK + H.264 (WiFi)",
+        "ScreenCaptureKit push-model, H.264 hardware encoding. ~15 FPS, ~1s latency, 30x less bandwidth. Best for slow WiFi."),
+    SCREENCAPTURE("screencapture (WiFi)",
+        "Legacy screencapture subprocess over WiFi. ~6 FPS. Fallback if SCK has issues on your Mac.");
 
     companion object {
         val LABELS = entries.map { it.label }
