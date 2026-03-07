@@ -72,13 +72,19 @@ class TestShortcutButtons:
     """Verify shortcut buttons are visible and tappable."""
 
     def test_shortcut_container_exists(self, adb: Adb, app_installed):
+        adb.launch_app()
+        time.sleep(2)
         adb.shell("uiautomator dump /sdcard/ui.xml")
         xml = adb.shell("cat /sdcard/ui.xml")
 
         has_container = "shortcut_container" in xml
-        has_undo = "Undo" in xml
+        # Shortcut button names depend on preset (Undo, Redo, Brush+, Brush-, etc.)
+        has_shortcut = "Undo" in xml or "Redo" in xml or "Brush" in xml or "Save" in xml
 
-        assert has_container or has_undo, "Shortcut buttons not found in UI"
+        assert has_container or has_shortcut, (
+            f"Shortcut buttons not found in UI. Package in dump: "
+            f"{xml.split('package=')[1].split('\"')[1] if 'package=' in xml else 'unknown'}"
+        )
 
     def test_shortcut_tap_no_crash(self, adb: Adb, app_installed):
         adb.tap_button("Undo")

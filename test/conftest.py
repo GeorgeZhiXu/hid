@@ -55,6 +55,22 @@ class Adb:
     def launch_app(self):
         self.shell("am start -n com.hid.tabletpen/.MainActivity")
         time.sleep(3)
+        self.dismiss_dialogs()
+
+    def dismiss_dialogs(self):
+        """Dismiss update dialog, permission dialogs, etc."""
+        for _ in range(3):
+            time.sleep(1)
+            self.shell("uiautomator dump /sdcard/ui.xml")
+            xml = self.shell("cat /sdcard/ui.xml")
+            if "permissioncontroller" in xml or "Permission" in xml:
+                # Tap "Allow" or "While using the app"
+                if not self.tap_button("permission_allow_button"):
+                    self.tap_button("permission_allow_foreground_only_button")
+            elif "alertTitle" in xml or "button2" in xml:
+                self.tap_button("button2")  # "Later" on update dialog
+            elif "com.hid.tabletpen" in xml:
+                break
 
     def force_stop(self):
         self.shell("am force-stop com.hid.tabletpen")
