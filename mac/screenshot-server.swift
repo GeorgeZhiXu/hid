@@ -660,8 +660,8 @@ func streamLoop(fd: Int32, params: CaptureParams = CaptureParams()) {
 
         } // useScKForStream
         if !sent {
-            // Full frame via legacy path
-            guard let frame = captureScreen(quality: params.quality, maxDim: params.maxDim, region: params.region) else {
+            // Full frame via legacy screencapture (SCK grabFrame returns stale buffers during streaming)
+            guard let frame = captureScreenLegacy(quality: params.quality, maxDim: params.maxDim, region: params.region) else {
                 usleep(100_000)
                 fcntl(fd, F_SETFL, flags | O_NONBLOCK)
                 continue
