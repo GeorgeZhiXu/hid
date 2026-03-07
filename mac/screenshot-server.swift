@@ -33,9 +33,20 @@ class SCKCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     private var stream: SCStream?
     private var latestBuffer: CVPixelBuffer?
     private let lock = NSLock()
-    private var running = false
-    /// When true, skip adaptive FPS filtering — every frame updates latestBuffer
-    var streamingMode = false
+    var running = false
+
+    // ---- Push-model streaming state ----
+    private var pushFd: Int32 = -1
+    private var pushParams = CaptureParams()
+    private var pushStop = false
+    private var pushEncoding = false  // back-pressure: true = encode queue busy
+    private var pushPrevBuffer: CVPixelBuffer?
+    private var pushPrevCGImage: CGImage?
+    private var pushKeyCounter = 0
+    var pushFrameCount = 0
+    private var pushStartTime: CFAbsoluteTime = 0
+    private var pushDoneSemaphore: DispatchSemaphore?
+    private let encodeQueue = DispatchQueue(label: "com.tabletpen.encode", qos: .userInitiated)
 
     func start() async throws {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
@@ -81,26 +92,204 @@ class SCKCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     private var previousBuffer: CVPixelBuffer?
     private var unchangedCount = 0
 
-    // SCStreamOutput — called on every frame by the system
+    // ---- Push-model streaming API ----
+
+    /// Start push-model streaming. Returns a semaphore that signals when streaming ends.
+    func startPushStream(fd: Int32, params: CaptureParams) -> DispatchSemaphore {
+        let sem = DispatchSemaphore(value: 0)
+        lock.lock()
+        pushFd = fd
+        pushParams = params
+        pushStop = false
+        pushEncoding = false
+        pushPrevBuffer = nil
+        pushPrevCGImage = nil
+        pushKeyCounter = 0
+        pushFrameCount = 0
+        pushStartTime = CFAbsoluteTimeGetCurrent()
+        pushDoneSemaphore = sem
+        unchangedCount = 30  // force next callback to process (bypass adaptive skip)
+        lock.unlock()
+
+        print("  Push stream started (fd=\(fd))")
+
+        // Start stop-reader thread: blocking read on fd for "stop" command
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            var buf = [UInt8](repeating: 0, count: 64)
+            while true {
+                let n = Darwin.read(fd, &buf, buf.count)
+                if n <= 0 {
+                    // Client disconnected
+                    self?.stopPushStream()
+                    return
+                }
+                if let msg = String(bytes: buf[0..<n], encoding: .utf8), msg.contains("stop") {
+                    self?.stopPushStream()
+                    return
+                }
+            }
+        }
+
+        return sem
+    }
+
+    /// Stop push-model streaming and signal the done semaphore.
+    func stopPushStream() {
+        lock.lock()
+        let wasActive = pushFd >= 0
+        pushFd = -1
+        pushStop = true
+        pushPrevBuffer = nil
+        pushPrevCGImage = nil
+        let sem = pushDoneSemaphore
+        pushDoneSemaphore = nil
+        lock.unlock()
+
+        if wasActive {
+            sem?.signal()
+        }
+    }
+
+    var isPushStreaming: Bool {
+        lock.lock()
+        let active = pushFd >= 0 && !pushStop
+        lock.unlock()
+        return active
+    }
+
+    // ---- SCK callback: push frames during streaming ----
+
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
                 of type: SCStreamOutputType) {
         guard type == .screen else { return }
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
-        // Adaptive FPS: skip if screen hasn't changed (only for single screenshots, not streaming)
-        if !streamingMode {
+        lock.lock()
+        let streamFd = pushFd
+        let stopped = pushStop
+        let streaming = streamFd >= 0 && !stopped
+        let encoding = pushEncoding
+        let params = pushParams
+        lock.unlock()
+
+        if !streaming {
+            // Single-screenshot mode: adaptive FPS filter
             if let prev = previousBuffer, !hasPixelsChanged(prev, pixelBuffer) {
                 unchangedCount += 1
-                if unchangedCount < 30 { return } // skip up to 30 frames (~1s at 30fps), then send 1 keepalive
+                if unchangedCount < 30 { return }
                 unchangedCount = 0
             } else {
                 unchangedCount = 0
             }
+
+            lock.lock()
+            previousBuffer = latestBuffer
+            latestBuffer = pixelBuffer
+            lock.unlock()
+            return
         }
+
+        // Push-model streaming: dispatch to encode queue
+        // Back-pressure: skip frame if previous is still encoding
+        if encoding { return }
 
         lock.lock()
         previousBuffer = latestBuffer
         latestBuffer = pixelBuffer
+        pushEncoding = true
+        lock.unlock()
+
+        // pixelBuffer is retained by Swift ARC via closure capture
+        encodeQueue.async { [weak self, pixelBuffer] in
+            defer {
+                self?.lock.lock()
+                self?.pushEncoding = false
+                self?.lock.unlock()
+            }
+            self?.encodeAndSendFrame(pixelBuffer: pixelBuffer, fd: streamFd, params: params)
+        }
+    }
+
+    /// Encode a frame and send it over the socket. Runs on the serial encode queue.
+    private func encodeAndSendFrame(pixelBuffer: CVPixelBuffer, fd: Int32, params: CaptureParams) {
+        lock.lock()
+        let stopped = pushStop
+        lock.unlock()
+        if stopped { return }
+
+        let t0 = CFAbsoluteTimeGetCurrent()
+
+        // Convert CVPixelBuffer → CGImage
+        var cgImage: CGImage?
+        VTCreateCGImageFromCVPixelBuffer(pixelBuffer, options: nil, imageOut: &cgImage)
+        guard var image = cgImage else { return }
+
+        if let r = params.region {
+            image = cropCGImage(image, region: r)
+        }
+
+        let t1 = CFAbsoluteTimeGetCurrent()
+
+        // Delta logic
+        lock.lock()
+        let prevBuf = pushPrevBuffer
+        let keyCounter = pushKeyCounter
+        lock.unlock()
+
+        let needsKey = keyCounter >= KEY_FRAME_INTERVAL || prevBuf == nil
+        var sent = false
+
+        if !needsKey, let prevBuf = prevBuf {
+            let tiles = identifyChangedTiles(pixelBuffer, prevBuf)
+            if tiles.isEmpty {
+                sent = true // No change — skip
+            } else {
+                let totalTiles = (CVPixelBufferGetWidth(pixelBuffer) / TILE_SIZE + 1)
+                    * (CVPixelBufferGetHeight(pixelBuffer) / TILE_SIZE + 1)
+                if tiles.count <= totalTiles / 2 {
+                    // Delta frame
+                    let payload = encodeDeltaPayload(tiles, image: image, quality: params.quality)
+                    if writeTypedFrame(type: 0x01, payload, to: fd) {
+                        lock.lock()
+                        pushKeyCounter += 1
+                        pushFrameCount += 1
+                        lock.unlock()
+                        let ms = Int((CFAbsoluteTimeGetCurrent() - t0) * 1000)
+                        print("  [push-delta] \(tiles.count) tiles \(payload.count/1024)KB \(ms)ms")
+                        sent = true
+                    } else {
+                        stopPushStream()
+                        return
+                    }
+                }
+                // >50% changed: fall through to key frame
+            }
+        }
+
+        if !sent {
+            // Key frame: full JPEG
+            guard let frame = encodeJPEG(image, quality: params.quality, maxDim: params.maxDim) else { return }
+            let t2 = CFAbsoluteTimeGetCurrent()
+            if writeTypedFrame(type: 0x02, frame.data, to: fd) {
+                lock.lock()
+                pushKeyCounter = 0
+                pushFrameCount += 1
+                let elapsed = CFAbsoluteTimeGetCurrent() - pushStartTime
+                let fps = elapsed > 0 ? Double(pushFrameCount) / elapsed : 0
+                lock.unlock()
+                let convertMs = Int((t1 - t0) * 1000)
+                let encodeMs = Int((t2 - t1) * 1000)
+                print("  [push-key] \(frame.data.count/1024)KB convert:\(convertMs)ms encode:\(encodeMs)ms fps:\(String(format: "%.1f", fps))")
+            } else {
+                stopPushStream()
+                return
+            }
+        }
+
+        // Update previous frame for delta comparison
+        lock.lock()
+        pushPrevBuffer = pixelBuffer
+        pushPrevCGImage = image
         lock.unlock()
     }
 
@@ -141,6 +330,7 @@ class SCKCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     func stream(_ stream: SCStream, didStopWithError error: Error) {
         print("SCK stream error: \(error.localizedDescription)")
         running = false
+        stopPushStream()
     }
 }
 #endif
@@ -548,7 +738,32 @@ func handleWifiClient(fd: Int32) {
                 print("WiFi screenshot: \(frame.data.count/1024)KB q=\(params.quality ?? jpegQuality) total:\(totalMs)ms")
             } else if action == "stream" {
                 print("WiFi: streaming started")
-                streamLoop(fd: fd, params: params)
+                var usedPush = false
+                #if canImport(ScreenCaptureKit)
+                if #available(macOS 12.3, *), let capture = sckCapture as? SCKCapture,
+                   capture.running {
+                    // Push-model: SCK callback drives frame encoding + sending
+                    print("WiFi: using SCK push-model")
+                    let sem = capture.startPushStream(fd: fd, params: params)
+                    // Wait up to 3s for first frame; if none arrive, SCK is stale — fall back
+                    let result = sem.wait(timeout: .now() + 3.0)
+                    if result == .timedOut && capture.pushFrameCount == 0 {
+                        print("WiFi: SCK push-model sent 0 frames in 3s — falling back to legacy")
+                        capture.stopPushStream()
+                    } else if result == .timedOut {
+                        // Frames are flowing, keep waiting
+                        sem.wait()
+                        capture.stopPushStream()
+                        usedPush = true
+                    } else {
+                        capture.stopPushStream()
+                        usedPush = true
+                    }
+                }
+                #endif
+                if !usedPush {
+                    streamLoop(fd: fd, params: params)  // legacy fallback
+                }
                 print("WiFi: streaming stopped")
             } else if cmd == "stop" {
                 break
@@ -568,12 +783,7 @@ var streamPreviousCGImage: CGImage? = nil
 func streamLoop(fd: Int32, params: CaptureParams = CaptureParams()) {
     streamFramesSinceKey = 0
     streamPreviousCGImage = nil
-    // Disable adaptive FPS filtering during streaming — every SCK frame should be available
-    #if canImport(ScreenCaptureKit)
-    if #available(macOS 12.3, *) {
-        (sckCapture as? SCKCapture)?.streamingMode = true
-    }
-    #endif
+    // Legacy streamLoop: only used on macOS < 12.3 (no SCK push-model available)
     // Make socket non-blocking to check for "stop" command while streaming
     let flags = fcntl(fd, F_GETFL)
     fcntl(fd, F_SETFL, flags | O_NONBLOCK)
@@ -673,13 +883,8 @@ func streamLoop(fd: Int32, params: CaptureParams = CaptureParams()) {
         fcntl(fd, F_SETFL, flags | O_NONBLOCK)
     }
 
-    // Restore blocking mode and re-enable adaptive FPS
+    // Restore blocking mode
     fcntl(fd, F_SETFL, flags)
-    #if canImport(ScreenCaptureKit)
-    if #available(macOS 12.3, *) {
-        (sckCapture as? SCKCapture)?.streamingMode = false
-    }
-    #endif
 }
 
 // MARK: - Bluetooth RFCOMM Server
