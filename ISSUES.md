@@ -9,6 +9,13 @@
 **Impact:** Tablet displays ~25% of frames — enough to show screen changes but with lower effective FPS than the 14 FPS encode rate. JPEG push-model at 29 FPS is smoother.
 **Future fix:** Use MediaCodec async callback mode or a dedicated drain thread that continuously polls output. Or render to Surface directly (zero-copy, bypasses Bitmap conversion).
 
+### BT H.264 streaming not working end-to-end
+**Status:** Open — infrastructure in place, connectivity issues
+**Symptoms:** Settings shows "SCK + H.264 (BT)" option but streaming fails with broken pipe or write errors.
+**Root cause:** Two issues: (1) Mac's BT stale timeout (40s) disconnects the channel before the stream command arrives; (2) RFCOMM write fails on the first H.264 frame even when connected. The BT reader thread's blocking `input.read()` also complicates concurrent read/write on the same RFCOMM channel.
+**What works:** Mac receives stream command, H.264 encoder starts at correct resolution, Android reader detects binary frames. The plumbing is there but the BT connection lifecycle needs work.
+**Future fix:** Extend stale timeout during streaming, or use a second RFCOMM channel dedicated to streaming (separate UUID, no read conflict).
+
 ### RFCOMM does not reconnect after Bluetooth disable/enable on Boox devices
 **Status:** Open — workaround available
 **Device:** Boox TabUltraCPro (Android 12, custom ROM)
