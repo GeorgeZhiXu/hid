@@ -174,7 +174,7 @@ class BluetoothHidManager(private val context: Context) {
             "TabletPen",
             "Stylus-to-HID digitizer bridge",
             "HID",
-            BluetoothHidDevice.SUBCLASS2_DIGITIZER_TABLET,
+            BluetoothHidDevice.SUBCLASS1_NONE,
             HidDescriptor.DESCRIPTOR
         )
 

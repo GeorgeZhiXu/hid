@@ -40,6 +40,12 @@
 **Symptoms:** WiFi Mac-as-server fails because CrowdStrike's `pf` rules block incoming TCP on port 9877.
 **Resolution:** Bidirectional WiFi — if Mac-as-server fails, tablet starts its own server and Mac connects outbound (outbound is never blocked).
 
+### Android InputDispatcher dropping pen events — "stylus device already active"
+**Status:** Resolved
+**Symptoms:** Pen input laggy, curves become angles, pressure=0. Android system log: "Dropping event because a pointer for a stylus device is already active"
+**Root cause:** `BluetoothHidDevice.registerApp()` with `SUBCLASS2_DIGITIZER_TABLET` causes Android to create a local virtual digitizer device. When the real Wacom pen touches the screen, Android sees two active stylus devices and drops events from one.
+**Fix:** Changed subclass to `SUBCLASS1_NONE`. Android no longer creates a local digitizer device, so the real pen has exclusive access. The HID descriptor still describes a digitizer to the REMOTE host (Mac) — only the local Android-side classification changed.
+
 ## Resolved
 
 ### Screenshot button disappearing after first capture

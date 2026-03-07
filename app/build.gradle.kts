@@ -11,8 +11,8 @@ android {
         applicationId = "com.hid.tabletpen"
         minSdk = 28
         targetSdk = 34
-        versionCode = 12
-        versionName = "1.1.1"
+        versionCode = 13
+        versionName = "1.1.2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
