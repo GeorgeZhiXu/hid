@@ -51,6 +51,7 @@ class BluetoothScreenshot(private val context: Context) {
         fun onWifiStateChanged(connected: Boolean)
         fun onStreamFrame(bitmap: Bitmap)
         fun onDeltaFrame(tiles: List<DeltaTile>)
+        fun onAppDetected(appName: String) {}
     }
 
     var listener: Listener? = null
@@ -203,32 +204,49 @@ class BluetoothScreenshot(private val context: Context) {
         val readerThread = Thread({
             try {
                 val input = btSocket.inputStream
-                val sb = StringBuilder()
+                // Continuous read loop: handles wifi: info, app: detection, and future messages
                 while (true) {
-                    val b = input.read()
-                    if (b == -1 || b == '\n'.code) break
-                    sb.append(b.toChar())
-                }
-                val line = sb.toString().trim()
-                Log.i(TAG, "Mac sent: '$line'")
-                val wifiInfo = PenMath.parseWifiInfo(line)
-                if (wifiInfo != null) {
-                    wifiHost = wifiInfo.first
-                    wifiPort = wifiInfo.second
-                    Log.i(TAG, "WiFi info received: $wifiHost:$wifiPort")
-                    tryBothDirections(btSocket)
+                    val sb = StringBuilder()
+                    while (true) {
+                        val b = input.read()
+                        if (b == -1) return@Thread  // connection closed
+                        if (b == '\n'.code) break
+                        sb.append(b.toChar())
+                    }
+                    val line = sb.toString().trim()
+                    if (line.isEmpty()) continue
+                    Log.i(TAG, "Mac sent: '$line'")
+
+                    when {
+                        line.startsWith("wifi:") -> {
+                            val wifiInfo = PenMath.parseWifiInfo(line)
+                            if (wifiInfo != null) {
+                                wifiHost = wifiInfo.first
+                                wifiPort = wifiInfo.second
+                                Log.i(TAG, "WiFi info received: $wifiHost:$wifiPort")
+                                btReadBusy.set(false)
+                                tryBothDirections(btSocket)
+                            }
+                        }
+                        line.startsWith("app:") -> {
+                            val appName = line.removePrefix("app:").trim()
+                            if (appName.isNotEmpty()) {
+                                Log.i(TAG, "Mac foreground app: $appName")
+                                mainHandler.post { listener?.onAppDetected(appName) }
+                            }
+                        }
+                        else -> Log.d(TAG, "Unknown Mac message: $line")
+                    }
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Failed to read WiFi info: ${e.message}")
+                Log.w(TAG, "BT read loop ended: ${e.message}")
             } finally {
                 btReadBusy.set(false)
             }
-        }, "BT-WifiInfo")
+        }, "BT-MsgReader")
         readerThread.start()
         readerThread.join(5000)
-        // Always clear the busy flag after timeout — allow BT screenshots
-        // even if WiFi info hasn't arrived yet. The reader thread continues
-        // in background and will connect WiFi when data arrives.
+        // Clear busy flag after timeout — allow BT screenshots even if WiFi info hasn't arrived
         btReadBusy.set(false)
     }
 

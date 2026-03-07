@@ -53,6 +53,7 @@ class MainActivity : AppCompatActivity(),
     private lateinit var shortcutContainer: android.widget.LinearLayout
 
     private var hidRegistered = false
+    private var detectedApp: String? = null
 
     // Block pairing requests from non-target devices
     private val pairingReceiver = object : BroadcastReceiver() {
@@ -162,6 +163,10 @@ class MainActivity : AppCompatActivity(),
             }
             override fun onDeltaFrame(tiles: List<BluetoothScreenshot.DeltaTile>) {
                 drawPad.composeDelta(tiles)
+            }
+            @SuppressLint("SetTextI18n")
+            override fun onAppDetected(appName: String) {
+                handleAppDetected(appName)
             }
         }
         btScreenshot.startServer()
@@ -463,6 +468,13 @@ class MainActivity : AppCompatActivity(),
         }
         layout.addView(streamQualitySpinner)
 
+        // Auto-switch preset by Mac app
+        val autoSwitchCheck = android.widget.CheckBox(this).apply {
+            text = "Auto-switch shortcuts by Mac app"
+            isChecked = settings.autoSwitchPreset
+        }
+        layout.addView(autoSwitchCheck)
+
         // Shortcut preset
         layout.addView(TextView(this).apply { text = "Shortcut Preset"; setPadding(0, 16, 0, 4) })
         val presetNames = SHORTCUT_PRESETS.keys.toList()
@@ -622,6 +634,7 @@ class MainActivity : AppCompatActivity(),
                     showGhostStroke = ghostCheck.isChecked,
                     screenshotQuality = CaptureQuality.entries[ssQualitySpinner.selectedItemPosition],
                     streamQuality = CaptureQuality.entries[streamQualitySpinner.selectedItemPosition],
+                    autoSwitchPreset = autoSwitchCheck.isChecked,
                     shortcuts = SHORTCUT_PRESETS[presetNames[presetSpinner.selectedItemPosition]] ?: DEFAULT_SHORTCUTS
                 )
                 AppSettings.save(this, settings)
@@ -671,6 +684,31 @@ class MainActivity : AppCompatActivity(),
             hidManager.sendKeyboardReport(0)
             ctrlHeld = false
             pinchAccum = 0f
+        }
+    }
+
+    // ---- Auto-detect Mac foreground app ----
+
+    @SuppressLint("SetTextI18n")
+    private fun handleAppDetected(appName: String) {
+        if (!settings.autoSwitchPreset) return
+        if (appName == detectedApp) return
+        detectedApp = appName
+
+        val presetName = APP_PRESET_MAP[appName]
+        if (presetName != null) {
+            val preset = SHORTCUT_PRESETS[presetName] ?: return
+            val pressureOverride = APP_PRESSURE_MAP[appName]
+
+            settings = settings.copy(
+                shortcuts = preset,
+                pressureFloor = pressureOverride ?: settings.pressureFloor
+            )
+            AppSettings.save(this, settings)
+            applySettingsToDrawPad()
+            setupShortcutButtons()
+            android.widget.Toast.makeText(this, "→ $presetName", android.widget.Toast.LENGTH_SHORT).show()
+            android.util.Log.i("AppDetect", "Auto-switched to $presetName preset for $appName")
         }
     }
 

@@ -106,6 +106,30 @@ enum class CaptureQuality(val label: String, val jpegQuality: Int, val maxDim: I
     }
 }
 
+/** Maps Mac app display names to shortcut preset names */
+val APP_PRESET_MAP = mapOf(
+    "Adobe Photoshop" to "Photoshop",
+    "Photoshop" to "Photoshop",
+    "Krita" to "Krita",
+    "krita" to "Krita",
+    "Microsoft OneNote" to "OneNote",
+    "OneNote" to "OneNote",
+    "Microsoft Whiteboard" to "Whiteboard",
+    "Whiteboard" to "Whiteboard",
+    "Preview" to "Preview",
+    "Notes" to "Preview",
+    "Excalidraw" to "Excalidraw",
+)
+
+/** Per-app pressure floor overrides (whiteboard apps need higher floor) */
+val APP_PRESSURE_MAP = mapOf(
+    "Microsoft OneNote" to 0.9f,
+    "OneNote" to 0.9f,
+    "Microsoft Whiteboard" to 0.9f,
+    "Whiteboard" to 0.9f,
+    "Notes" to 0.85f,
+)
+
 enum class InputMode { DIGITIZER, MOUSE }
 
 enum class OrientationMode { AUTO, PORTRAIT, LANDSCAPE }
@@ -163,6 +187,7 @@ data class AppSettings(
     val showGhostStroke: Boolean = true,
     val screenshotQuality: CaptureQuality = CaptureQuality.AUTO,
     val streamQuality: CaptureQuality = CaptureQuality.AUTO,
+    val autoSwitchPreset: Boolean = true,
     val shortcuts: List<ShortcutConfig> = DEFAULT_SHORTCUTS
 ) {
     companion object {
@@ -185,6 +210,7 @@ data class AppSettings(
         private const val KEY_GHOST_STROKE = "ghost_stroke"
         private const val KEY_SCREENSHOT_QUALITY = "screenshot_quality"
         private const val KEY_STREAM_QUALITY = "stream_quality"
+        private const val KEY_AUTO_SWITCH_PRESET = "auto_switch_preset"
         private const val KEY_SHORTCUTS = "shortcuts"
         private const val KEY_LAST_DEVICE = "last_device"
         private const val KEY_KNOWN_DEVICES = "known_devices"
@@ -256,6 +282,7 @@ data class AppSettings(
                 showGhostStroke = p.getBoolean(KEY_GHOST_STROKE, true),
                 screenshotQuality = CaptureQuality.entries.getOrElse(p.getInt(KEY_SCREENSHOT_QUALITY, 0)) { CaptureQuality.AUTO },
                 streamQuality = CaptureQuality.entries.getOrElse(p.getInt(KEY_STREAM_QUALITY, 0)) { CaptureQuality.AUTO },
+                autoSwitchPreset = p.getBoolean(KEY_AUTO_SWITCH_PRESET, true),
                 shortcuts = try {
                     val json = p.getString(KEY_SHORTCUTS, null)
                     if (json != null) {
@@ -286,6 +313,7 @@ data class AppSettings(
                 .putBoolean(KEY_GHOST_STROKE, s.showGhostStroke)
                 .putInt(KEY_SCREENSHOT_QUALITY, s.screenshotQuality.ordinal)
                 .putInt(KEY_STREAM_QUALITY, s.streamQuality.ordinal)
+                .putBoolean(KEY_AUTO_SWITCH_PRESET, s.autoSwitchPreset)
                 .putString(KEY_SHORTCUTS, org.json.JSONArray(s.shortcuts.map { it.toJson() }).toString())
                 .apply()
         }

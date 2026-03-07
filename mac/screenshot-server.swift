@@ -871,6 +871,8 @@ class ScreenshotServer: NSObject, IOBluetoothRFCOMMChannelDelegate {
     var targetName: String?
     private var livenessTimer: Timer?
     private var lastDataTime: CFAbsoluteTime = 0
+    private var appMonitorTimer: Timer?
+    private var lastForegroundApp: String = ""
 
     // Saved last device for fast reconnect
     private var lastDeviceAddress: String? {
@@ -1049,6 +1051,39 @@ class ScreenshotServer: NSObject, IOBluetoothRFCOMMChannelDelegate {
         print("Sent WiFi info: \(info.trimmingCharacters(in: .newlines))")
     }
 
+    private func sendAppInfo(channel: IOBluetoothRFCOMMChannel, appName: String) {
+        let msg = "app:\(appName)\n"
+        guard let data = msg.data(using: .utf8) else { return }
+        data.withUnsafeBytes { buf in
+            _ = channel.writeSync(UnsafeMutableRawPointer(mutating: buf.baseAddress!), length: UInt16(data.count))
+        }
+    }
+
+    func startAppMonitor() {
+        stopAppMonitor()
+        // Send current app immediately
+        if let ch = channel, let appName = NSWorkspace.shared.frontmostApplication?.localizedName {
+            lastForegroundApp = appName
+            sendAppInfo(channel: ch, appName: appName)
+            print("Foreground app: \(appName)")
+        }
+        // Poll every 2 seconds
+        appMonitorTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            guard let self = self, let ch = self.channel else { return }
+            guard let appName = NSWorkspace.shared.frontmostApplication?.localizedName else { return }
+            if appName != self.lastForegroundApp {
+                self.lastForegroundApp = appName
+                self.sendAppInfo(channel: ch, appName: appName)
+                print("Foreground app changed: \(appName)")
+            }
+        }
+    }
+
+    func stopAppMonitor() {
+        appMonitorTimer?.invalidate()
+        appMonitorTimer = nil
+    }
+
     // MARK: - RFCOMM Delegate
 
     func rfcommChannelOpenComplete(_ ch: IOBluetoothRFCOMMChannel!, status err: IOReturn) {
@@ -1064,6 +1099,7 @@ class ScreenshotServer: NSObject, IOBluetoothRFCOMMChannelDelegate {
             self.lastDataTime = CFAbsoluteTimeGetCurrent()
             self.startLivenessTimer()
             sendWifiInfo(channel: ch)
+            startAppMonitor()
         } else {
             print("BT delegate: connection failed (\(err))")
         }
@@ -1117,6 +1153,7 @@ class ScreenshotServer: NSObject, IOBluetoothRFCOMMChannelDelegate {
 
     func rfcommChannelClosed(_ ch: IOBluetoothRFCOMMChannel!) {
         print("BT disconnected from \(tablet?.name ?? "?")")
+        stopAppMonitor()
         channel = nil
         tablet = nil
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { self.start()
