@@ -233,23 +233,16 @@ class SCKCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 
         let t1 = CFAbsoluteTimeGetCurrent()
 
-        // Encode JPEG — uses maxDim for resize if needed, or direct encode at native res
-        let maxDim = params.maxDim
-        let frameData: Data
-        if maxDim == nil || maxDim! >= max(image.width, image.height) {
-            // No resize needed — direct fast encode
-            let outData = NSMutableData()
-            guard let dest = CGImageDestinationCreateWithData(outData, "public.jpeg" as CFString, 1, nil) else { return }
-            CGImageDestinationAddImage(dest, image, [
-                kCGImageDestinationLossyCompressionQuality: Double(params.quality ?? jpegQuality) / 100.0
-            ] as CFDictionary)
-            guard CGImageDestinationFinalize(dest) else { return }
-            frameData = outData as Data
-        } else {
-            // Resize via encodeJPEG (slower but respects maxDim for lower quality settings)
-            guard let frame = encodeJPEG(image, quality: params.quality, maxDim: maxDim) else { return }
-            frameData = frame.data
-        }
+        // Push-model: always encode at native resolution (no resize).
+        // Resize is 5x slower (~57ms) vs direct encode (~11ms) and kills FPS.
+        // Only JPEG quality varies — bandwidth is not the bottleneck on WiFi.
+        let outData = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(outData, "public.jpeg" as CFString, 1, nil) else { return }
+        CGImageDestinationAddImage(dest, image, [
+            kCGImageDestinationLossyCompressionQuality: Double(params.quality ?? jpegQuality) / 100.0
+        ] as CFDictionary)
+        guard CGImageDestinationFinalize(dest) else { return }
+        let frameData = outData as Data
         let t2 = CFAbsoluteTimeGetCurrent()
         if writeTypedFrame(type: 0x00, frameData, to: fd) {
             lock.lock()
