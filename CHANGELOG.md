@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.4.0 (2026-03-07)
+
+### Features
+- **BT H.264 streaming** — stream over Bluetooth without WiFi. H.264 at 400kbps, ~5-10 FPS. Auto mode falls back to BT when WiFi unavailable.
+- **Stream Method setting** — 5 options with descriptions: Auto, SCK+JPEG (WiFi), SCK+H.264 (WiFi), SCK+H.264 (BT), screencapture (WiFi).
+- **Stream button visible on BT-only** — no longer requires WiFi for streaming.
+
+### Improvements
+- Refactored stream frame reading into shared `streamFrameLoop(InputStream)` for WiFi and BT paths
+- Mac handles `"stream"` command over RFCOMM with H.264 encoding at reduced bitrate
+
 ## v1.3.0 (2026-03-07)
 
 ### Features

@@ -53,8 +53,8 @@ Implementation approach:
 ### ~~Local cursor prediction~~ (Implemented v0.9.0)
 Render the pen/mouse cursor locally on the tablet with zero latency, before the Mac screen update arrives. The actual pixel data follows behind but the user sees immediate cursor response. This is VNC's key trick for perceived responsiveness.
 
-### ~~H.264/HEVC hardware encoding~~ (Implemented v1.3.0)
-Mac encodes via VideoToolbox at 3-5KB per frame (30-60x smaller than JPEG). Android decodes via MediaCodec. Protocol type byte 0x03 with Annex B NAL units. Falls back to JPEG for focus mode.
+### ~~H.264/HEVC hardware encoding~~ (Implemented v1.3.0, BT streaming v1.4.0)
+Mac encodes via VideoToolbox at 3-5KB per frame (30-60x smaller than JPEG). Android decodes via MediaCodec + RenderScript. Works over both WiFi and Bluetooth RFCOMM. BT uses 400kbps bitrate for ~5-10 FPS.
 
 ### WebP encoding
 Replace JPEG with WebP for 30% smaller files at same visual quality, or same size at better quality. Both Android and macOS support WebP natively.
