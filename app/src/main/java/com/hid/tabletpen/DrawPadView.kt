@@ -48,6 +48,11 @@ class DrawPadView @JvmOverloads constructor(
     var onMouseEvent: ((MouseEvent) -> Unit)? = null
     var onPinchZoom: ((Float) -> Unit)? = null  // called with scale factor during pinch
 
+    /** Test hook: when non-null, mouse events are recorded here in addition to normal dispatch. */
+    @Volatile var testMouseEvents: MutableList<MouseEvent>? = null
+    /** Test hook: when non-null, pen events are recorded here in addition to normal dispatch. */
+    @Volatile var testPenEvents: MutableList<PenEvent>? = null
+
     // ---- Settings ----
 
     var inputMode: InputMode = InputMode.DIGITIZER
@@ -668,7 +673,14 @@ class DrawPadView @JvmOverloads constructor(
         nx: Float, ny: Float, pressure: Float, toolType: Int,
         tiltX: Float = 0f, tiltY: Float = 0f
     ) {
-        onPenEvent?.invoke(PenEvent(tipDown, barrel, inRange, nx, ny, pressure, toolType, tiltX, tiltY))
+        val event = PenEvent(tipDown, barrel, inRange, nx, ny, pressure, toolType, tiltX, tiltY)
+        testPenEvents?.add(event)
+        onPenEvent?.invoke(event)
+    }
+
+    internal fun dispatchMouse(event: MouseEvent) {
+        testMouseEvents?.add(event)
+        onMouseEvent?.invoke(event)
     }
 
     // ---- Mouse mode ----
@@ -683,7 +695,7 @@ class DrawPadView @JvmOverloads constructor(
                 if (lastMouseX >= 0 && lastMouseY >= 0) {
                     val dx = x - lastMouseX
                     val dy = y - lastMouseY
-                    onMouseEvent?.invoke(MouseEvent(leftButton = false, rightButton = false, dx = dx, dy = dy))
+                    dispatchMouse(MouseEvent(leftButton = false, rightButton = false, dx = dx, dy = dy))
                 }
                 lastMouseX = x
                 lastMouseY = y
@@ -709,12 +721,12 @@ class DrawPadView @JvmOverloads constructor(
                         // Held long enough without moving → press-and-hold (left button down for drag)
                         mouseClickPending = false
                         mouseDragging = true
-                        onMouseEvent?.invoke(MouseEvent(leftButton = true, rightButton = false, dx = 0f, dy = 0f))
+                        dispatchMouse(MouseEvent(leftButton = true, rightButton = false, dx = 0f, dy = 0f))
                     } else if (mouseDragging) {
                         // Already dragging, trigger right-click
                         longPressTriggered = true
                         // Release left, press right
-                        onMouseEvent?.invoke(MouseEvent(leftButton = false, rightButton = true, dx = 0f, dy = 0f))
+                        dispatchMouse(MouseEvent(leftButton = false, rightButton = true, dx = 0f, dy = 0f))
                     }
                 }
                 longPressHandler.postDelayed(longPressRunnable!!, LONG_PRESS_TIMEOUT)
@@ -732,10 +744,10 @@ class DrawPadView @JvmOverloads constructor(
                             mouseDragging = true
                             cancelPendingLongPress()
                             // Send button-down now, then movement from down-point
-                            onMouseEvent?.invoke(MouseEvent(leftButton = true, rightButton = false, dx = 0f, dy = 0f))
+                            dispatchMouse(MouseEvent(leftButton = true, rightButton = false, dx = 0f, dy = 0f))
                             val dx = x - mouseDownX
                             val dy = y - mouseDownY
-                            onMouseEvent?.invoke(MouseEvent(leftButton = true, rightButton = false, dx = dx, dy = dy))
+                            dispatchMouse(MouseEvent(leftButton = true, rightButton = false, dx = dx, dy = dy))
                             lastMouseX = x
                             lastMouseY = y
                         }
@@ -745,7 +757,7 @@ class DrawPadView @JvmOverloads constructor(
                         val dx = x - lastMouseX
                         val dy = y - lastMouseY
                         val button = !longPressTriggered
-                        onMouseEvent?.invoke(MouseEvent(leftButton = button, rightButton = longPressTriggered, dx = dx, dy = dy))
+                        dispatchMouse(MouseEvent(leftButton = button, rightButton = longPressTriggered, dx = dx, dy = dy))
                         lastMouseX = x
                         lastMouseY = y
                     }
@@ -758,17 +770,17 @@ class DrawPadView @JvmOverloads constructor(
                     val elapsed = System.currentTimeMillis() - mouseDownTime
                     if (elapsed < MOUSE_CLICK_TIMEOUT) {
                         // Quick tap → left click (press + release)
-                        onMouseEvent?.invoke(MouseEvent(leftButton = true, rightButton = false, dx = 0f, dy = 0f))
+                        dispatchMouse(MouseEvent(leftButton = true, rightButton = false, dx = 0f, dy = 0f))
                         postDelayed({
-                            onMouseEvent?.invoke(MouseEvent(leftButton = false, rightButton = false, dx = 0f, dy = 0f))
+                            dispatchMouse(MouseEvent(leftButton = false, rightButton = false, dx = 0f, dy = 0f))
                         }, 50)
                     } else {
                         // Was held long (press-and-hold case handled by long press runnable, but release anyway)
-                        onMouseEvent?.invoke(MouseEvent(leftButton = false, rightButton = false, dx = 0f, dy = 0f))
+                        dispatchMouse(MouseEvent(leftButton = false, rightButton = false, dx = 0f, dy = 0f))
                     }
                 } else {
                     // Was dragging — release all buttons
-                    onMouseEvent?.invoke(MouseEvent(leftButton = false, rightButton = false, dx = 0f, dy = 0f))
+                    dispatchMouse(MouseEvent(leftButton = false, rightButton = false, dx = 0f, dy = 0f))
                 }
                 mouseButtonDown = false
                 mouseClickPending = false
@@ -850,7 +862,7 @@ class DrawPadView @JvmOverloads constructor(
                     val dy = event.y - trackLastY
                     if (dx * dx + dy * dy > 4f) {
                         trackMoved = true
-                        onMouseEvent?.invoke(MouseEvent(leftButton = false, rightButton = false, dx = dx, dy = dy))
+                        dispatchMouse(MouseEvent(leftButton = false, rightButton = false, dx = dx, dy = dy))
                         trackLastX = event.x
                         trackLastY = event.y
                     }
@@ -889,7 +901,7 @@ class DrawPadView @JvmOverloads constructor(
 
                             val scrollY = scrollAccumY.toInt()
                             if (scrollY != 0) {
-                                onMouseEvent?.invoke(MouseEvent(
+                                dispatchMouse(MouseEvent(
                                     leftButton = false, rightButton = false,
                                     dx = 0f, dy = 0f, scroll = scrollY.toFloat().coerceIn(-127f, 127f)
                                 ))
@@ -898,7 +910,7 @@ class DrawPadView @JvmOverloads constructor(
 
                             val scrollX = scrollAccumX.toInt()
                             if (scrollX != 0) {
-                                onMouseEvent?.invoke(MouseEvent(
+                                dispatchMouse(MouseEvent(
                                     leftButton = false, rightButton = false,
                                     dx = 0f, dy = 0f,
                                     scroll = 0f,
@@ -935,15 +947,15 @@ class DrawPadView @JvmOverloads constructor(
                 if (isTap) {
                     if (trackMaxFingers >= 2) {
                         // Two finger tap → right click
-                        onMouseEvent?.invoke(MouseEvent(leftButton = false, rightButton = true, dx = 0f, dy = 0f))
+                        dispatchMouse(MouseEvent(leftButton = false, rightButton = true, dx = 0f, dy = 0f))
                         postDelayed({
-                            onMouseEvent?.invoke(MouseEvent(leftButton = false, rightButton = false, dx = 0f, dy = 0f))
+                            dispatchMouse(MouseEvent(leftButton = false, rightButton = false, dx = 0f, dy = 0f))
                         }, 50)
                     } else {
                         // Single finger tap → left click
-                        onMouseEvent?.invoke(MouseEvent(leftButton = true, rightButton = false, dx = 0f, dy = 0f))
+                        dispatchMouse(MouseEvent(leftButton = true, rightButton = false, dx = 0f, dy = 0f))
                         postDelayed({
-                            onMouseEvent?.invoke(MouseEvent(leftButton = false, rightButton = false, dx = 0f, dy = 0f))
+                            dispatchMouse(MouseEvent(leftButton = false, rightButton = false, dx = 0f, dy = 0f))
                         }, 50)
                     }
                 }
