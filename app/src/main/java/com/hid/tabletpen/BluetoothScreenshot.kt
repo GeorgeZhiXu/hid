@@ -622,43 +622,104 @@ class BluetoothScreenshot(private val context: Context) {
         return bitmap
     }
 
-    /** Convert YUV_420_888 Image from MediaCodec to Bitmap via YuvImage (NV21→JPEG→Bitmap) */
+    // RenderScript for fast YUV→RGB conversion
+    private var renderScript: android.renderscript.RenderScript? = null
+    private var yuvToRgb: android.renderscript.ScriptIntrinsicYuvToRGB? = null
+    private var rsYuvAlloc: android.renderscript.Allocation? = null
+    private var rsRgbAlloc: android.renderscript.Allocation? = null
+    private var rsWidth = 0
+    private var rsHeight = 0
+
+    @Suppress("DEPRECATION")
     private fun yuvImageToBitmap(image: android.media.Image): Bitmap? {
         val width = image.width
         val height = image.height
+
+        // Initialize RenderScript on first use or resolution change
+        if (renderScript == null || rsWidth != width || rsHeight != height) {
+            rsYuvAlloc?.destroy()
+            rsRgbAlloc?.destroy()
+            yuvToRgb?.destroy()
+            renderScript?.destroy()
+
+            renderScript = android.renderscript.RenderScript.create(context)
+            yuvToRgb = android.renderscript.ScriptIntrinsicYuvToRGB.create(
+                renderScript, android.renderscript.Element.U8_4(renderScript))
+
+            val yuvType = android.renderscript.Type.Builder(renderScript,
+                android.renderscript.Element.U8(renderScript))
+                .setX(width * height * 3 / 2).create()
+            rsYuvAlloc = android.renderscript.Allocation.createTyped(renderScript, yuvType,
+                android.renderscript.Allocation.USAGE_SCRIPT)
+
+            val rgbType = android.renderscript.Type.Builder(renderScript,
+                android.renderscript.Element.RGBA_8888(renderScript))
+                .setX(width).setY(height).create()
+            rsRgbAlloc = android.renderscript.Allocation.createTyped(renderScript, rgbType,
+                android.renderscript.Allocation.USAGE_SCRIPT)
+
+            yuvToRgb!!.setInput(rsYuvAlloc)
+            rsWidth = width
+            rsHeight = height
+        }
+
+        // Build NV21 byte array from Image planes
         val yPlane = image.planes[0]
         val uPlane = image.planes[1]
         val vPlane = image.planes[2]
-
         val yBuf = yPlane.buffer
         val uBuf = uPlane.buffer
         val vBuf = vPlane.buffer
-
         val yRowStride = yPlane.rowStride
         val uvRowStride = uPlane.rowStride
         val uvPixelStride = uPlane.pixelStride
 
         val nv21 = ByteArray(width * height * 3 / 2)
         var pos = 0
-        for (row in 0 until height) {
-            yBuf.position(row * yRowStride)
-            yBuf.get(nv21, pos, width)
-            pos += width
-        }
-        for (row in 0 until height / 2) {
-            for (col in 0 until width / 2) {
-                val uvOffset = row * uvRowStride + col * uvPixelStride
-                vBuf.position(uvOffset)
-                nv21[pos++] = vBuf.get()
-                uBuf.position(uvOffset)
-                nv21[pos++] = uBuf.get()
+        if (yRowStride == width) {
+            // Fast path: no padding, bulk copy Y plane
+            yBuf.position(0)
+            yBuf.get(nv21, 0, width * height)
+            pos = width * height
+        } else {
+            for (row in 0 until height) {
+                yBuf.position(row * yRowStride)
+                yBuf.get(nv21, pos, width)
+                pos += width
             }
         }
 
-        val yuvImage = android.graphics.YuvImage(nv21, android.graphics.ImageFormat.NV21, width, height, null)
-        val out = java.io.ByteArrayOutputStream()
-        yuvImage.compressToJpeg(android.graphics.Rect(0, 0, width, height), 85, out)
-        return BitmapFactory.decodeByteArray(out.toByteArray(), 0, out.size())
+        // UV planes: interleave as VU (NV21 format for RenderScript)
+        for (row in 0 until height / 2) {
+            for (col in 0 until width / 2) {
+                val uvOffset = row * uvRowStride + col * uvPixelStride
+                nv21[pos++] = vBuf.get(uvOffset)
+                nv21[pos++] = uBuf.get(uvOffset)
+            }
+        }
+
+        // RenderScript conversion: NV21 → ARGB (~2ms on GPU)
+        try {
+            rsYuvAlloc!!.copyFrom(nv21)
+            yuvToRgb!!.forEach(rsRgbAlloc)
+            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            rsRgbAlloc!!.copyTo(bitmap)
+            return bitmap
+        } catch (e: Exception) {
+            Log.w(TAG, "RenderScript failed, falling back to YuvImage: ${e.message}")
+            // Fallback: NV21 → JPEG → Bitmap
+            val yuvImage = android.graphics.YuvImage(nv21, android.graphics.ImageFormat.NV21, width, height, null)
+            val out = java.io.ByteArrayOutputStream()
+            yuvImage.compressToJpeg(android.graphics.Rect(0, 0, width, height), 85, out)
+            return BitmapFactory.decodeByteArray(out.toByteArray(), 0, out.size())
+        }
+    }
+
+    private fun releaseRenderScript() {
+        rsYuvAlloc?.destroy(); rsYuvAlloc = null
+        rsRgbAlloc?.destroy(); rsRgbAlloc = null
+        yuvToRgb?.destroy(); yuvToRgb = null
+        renderScript?.destroy(); renderScript = null
     }
 
     private fun releaseH264Decoder() {
@@ -667,6 +728,7 @@ class BluetoothScreenshot(private val context: Context) {
         h264Decoder = null
         h264BufferInfo = null
         h264LatestBitmap = null
+        releaseRenderScript()
     }
 
     fun stopStream() {
