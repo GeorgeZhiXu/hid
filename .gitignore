@@ -25,3 +25,5 @@ remarkable/sdp_sniff
 sony-dpt/tabletpen-arm64
 __pycache__/
 *.pyc
+test/sck-test
+main
