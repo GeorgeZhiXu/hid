@@ -235,79 +235,29 @@ class SCKCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 
         let t1 = CFAbsoluteTimeGetCurrent()
 
-        // Delta logic — compare full pixel buffers (no region crop) for tile detection,
-        // then encode tiles from the (possibly cropped) CGImage.
-        // When focus is active, we skip delta and send key frames to avoid coord mismatch.
-        lock.lock()
-        let prevBuf = pushPrevBuffer
-        let keyCounter = pushKeyCounter
-        lock.unlock()
-
-        let hasFocus = params.region != nil
-        let needsKey = keyCounter >= KEY_FRAME_INTERVAL || prevBuf == nil || hasFocus
-        var sent = false
-
-        if !needsKey, let prevBuf = prevBuf {
-            let tiles = identifyChangedTiles(pixelBuffer, prevBuf)
-            if tiles.isEmpty {
-                sent = true // No visible change — skip
-            } else {
-                let totalTiles = (CVPixelBufferGetWidth(pixelBuffer) / TILE_SIZE + 1)
-                    * (CVPixelBufferGetHeight(pixelBuffer) / TILE_SIZE + 1)
-                if tiles.count <= totalTiles / 2 {
-                    // Delta: encode only changed tiles
-                    let payload = encodeDeltaPayload(tiles, image: image, quality: params.quality)
-                    let t2 = CFAbsoluteTimeGetCurrent()
-                    if writeTypedFrame(type: 0x01, payload, to: fd) {
-                        lock.lock()
-                        pushKeyCounter += 1
-                        pushFrameCount += 1
-                        let elapsed = CFAbsoluteTimeGetCurrent() - pushStartTime
-                        let fps = elapsed > 0 ? Double(pushFrameCount) / elapsed : 0
-                        lock.unlock()
-                        let ms = Int((t2 - t1) * 1000)
-                        print("  [push-delta] \(tiles.count) tiles \(payload.count/1024)KB \(ms)ms fps:\(String(format: "%.1f", fps))")
-                        sent = true
-                    } else {
-                        stopPushStream()
-                        return
-                    }
-                }
-                // >50% changed: fall through to key frame
-            }
+        // Full JPEG every frame — faster than delta (1 encode vs N tile encodes)
+        // and WiFi has enough bandwidth for 90KB × 30 FPS = 2.7 MB/s
+        let outData = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(outData, "public.jpeg" as CFString, 1, nil) else { return }
+        CGImageDestinationAddImage(dest, image, [
+            kCGImageDestinationLossyCompressionQuality: Double(params.quality ?? jpegQuality) / 100.0
+        ] as CFDictionary)
+        guard CGImageDestinationFinalize(dest) else { return }
+        let frameData = outData as Data
+        let t2 = CFAbsoluteTimeGetCurrent()
+        if writeTypedFrame(type: 0x00, frameData, to: fd) {
+            lock.lock()
+            pushFrameCount += 1
+            let elapsed = CFAbsoluteTimeGetCurrent() - pushStartTime
+            let fps = elapsed > 0 ? Double(pushFrameCount) / elapsed : 0
+            lock.unlock()
+            let convertMs = Int((t1 - t0) * 1000)
+            let encodeMs = Int((t2 - t1) * 1000)
+            print("  [push] \(frameData.count/1024)KB convert:\(convertMs)ms encode:\(encodeMs)ms fps:\(String(format: "%.1f", fps))")
+        } else {
+            stopPushStream()
+            return
         }
-
-        if !sent {
-            // Key frame: full JPEG, no resize needed (SCK captures at target resolution)
-            let outData = NSMutableData()
-            guard let dest = CGImageDestinationCreateWithData(outData, "public.jpeg" as CFString, 1, nil) else { return }
-            CGImageDestinationAddImage(dest, image, [
-                kCGImageDestinationLossyCompressionQuality: Double(params.quality ?? jpegQuality) / 100.0
-            ] as CFDictionary)
-            guard CGImageDestinationFinalize(dest) else { return }
-            let frameData = outData as Data
-            let t2 = CFAbsoluteTimeGetCurrent()
-            if writeTypedFrame(type: 0x02, frameData, to: fd) {
-                lock.lock()
-                pushKeyCounter = 0
-                pushFrameCount += 1
-                let elapsed = CFAbsoluteTimeGetCurrent() - pushStartTime
-                let fps = elapsed > 0 ? Double(pushFrameCount) / elapsed : 0
-                lock.unlock()
-                let convertMs = Int((t1 - t0) * 1000)
-                let encodeMs = Int((t2 - t1) * 1000)
-                print("  [push-key] \(frameData.count/1024)KB convert:\(convertMs)ms encode:\(encodeMs)ms fps:\(String(format: "%.1f", fps))")
-            } else {
-                stopPushStream()
-                return
-            }
-        }
-
-        // Update previous frame
-        lock.lock()
-        pushPrevBuffer = pixelBuffer
-        pushPrevCGImage = image
-        lock.unlock()
     }
 
     /// Quick pixel diff: sample 16 random-ish positions
