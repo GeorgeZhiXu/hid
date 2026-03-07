@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.3.0 (2026-03-07)
+
+### Features
+- **H.264 hardware encoding for streaming** — Mac encodes via VideoToolbox VTCompressionSession. Frames are 3-5KB (30-60x smaller than JPEG). Protocol type byte `0x03` with Annex B NAL units. Falls back to JPEG for focus/region or when H.264 unavailable.
+- **H.264 hardware decoding on tablet** — Android MediaCodec decodes H.264, converts YUV→Bitmap via Image planes. Content changes verified with 7 unique hashes in E2E test.
+
+### Fixes
+- **WiFi socket close command** — Android sends `"close\n"` before closing WiFi socket, so Mac handler returns to `accept()` cleanly for stream connection.
+- **H.264 encoder crash fix** — bounds-checked AVCC→Annex B NAL conversion, proper keyframe detection, autoreleasepool in output callback.
+
+### Testing
+- H.264 E2E tests: server encodes 176 frames at 3KB avg, tablet decodes 21 bitmaps with 7 unique content hashes
+
 ## v1.2.1 (2026-03-07)
 
 ### Features

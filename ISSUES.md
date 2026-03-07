@@ -2,6 +2,13 @@
 
 ## Open
 
+### H.264 decode produces bitmaps for ~25% of frames
+**Status:** Open — functional but suboptimal
+**Symptoms:** Of 132 H.264 frames received, only 31 decode to Bitmap. The rest have null output from MediaCodec.
+**Root cause:** MediaCodec's hardware decode pipeline buffers 2-3 frames before producing output. Small P-frames (0KB skip frames) don't generate output. The `dequeueOutputBuffer` timeout of 10ms is sometimes not enough.
+**Impact:** Tablet displays ~25% of frames — enough to show screen changes but with lower effective FPS than the 14 FPS encode rate. JPEG push-model at 29 FPS is smoother.
+**Future fix:** Use MediaCodec async callback mode or a dedicated drain thread that continuously polls output. Or render to Surface directly (zero-copy, bypasses Bitmap conversion).
+
 ### RFCOMM does not reconnect after Bluetooth disable/enable on Boox devices
 **Status:** Open — workaround available
 **Device:** Boox TabUltraCPro (Android 12, custom ROM)
