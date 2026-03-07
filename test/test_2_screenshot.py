@@ -105,23 +105,124 @@ class TestStreaming:
 
 
 class TestSCKPushModel:
-    """Verify SCK push-model is attempted and falls back gracefully."""
+    """Verify SCK push-model streaming delivers frames at high FPS."""
 
-    def test_push_model_probe_and_fallback(self, adb: Adb, bt_connected: ScreenshotServer):
-        """Push model is attempted; falls back to legacy on static desktop."""
+    def test_push_model_active(self, adb: Adb, bt_connected: ScreenshotServer):
+        """Push model delivers [push] frames when screen is changing."""
+        import subprocess as sp
+
+        adb.shell("uiautomator dump /sdcard/ui.xml")
+        xml = adb.shell("cat /sdcard/ui.xml")
+        if "btn_stream" not in xml:
+            pytest.skip("Stream button not visible (WiFi not connected)")
+
+        # Stop stream if running
+        if 'text="Stop"' in xml and "btn_stream" in xml:
+            adb.tap_button("btn_stream")
+            time.sleep(5)
+
+        adb.clear_logcat()
+        time.sleep(1)
+        assert adb.tap_button("btn_stream"), "Stream button not found"
+
+        # Generate screen changes IMMEDIATELY to trigger SCK during 3s probe
+        # TextEdit opens a white window — big compositor change
+        sp.run(["osascript", "-e", '''
+            tell app "TextEdit" to activate
+            tell app "System Events" to tell process "TextEdit"
+                try
+                    click menu item "New" of menu "File" of menu bar 1
+                end try
+                set frontmost to true
+            end tell
+        '''], timeout=10)
+        time.sleep(5)
+
+        # Close TextEdit — another screen change
+        sp.run(["osascript", "-e", 'tell app "TextEdit" to quit saving no'], timeout=5)
+        time.sleep(5)
+
+        # Stop stream
+        adb.tap_button("btn_stream")
+        time.sleep(2)
+
+        # Check server log for push-model
         log = bt_connected.read_log()
         if "SCK push-model" not in log:
-            pytest.skip("Push model not attempted (SCK may be unavailable)")
-        # Push model was attempted — verify it either worked or fell back gracefully
-        used_push = "[push]" in log or "[push-key]" in log or "[push-delta]" in log
-        fell_back = "falling back to legacy" in log
-        assert used_push or fell_back, (
-            "Push model neither delivered frames nor fell back to legacy"
+            pytest.skip("Push model not attempted (SCK unavailable on this machine)")
+
+        push_frames = log.count("[push]")
+        used_legacy = "falling back to legacy" in log and push_frames == 0
+
+        if used_legacy:
+            pytest.fail(
+                "Push model fell back to legacy. Check Screen Recording permission "
+                "and ensure no other screenshot-server is running.\n"
+                f"Server log snippet: {[l for l in log.split(chr(10)) if 'push' in l.lower() or 'SCK' in l or 'legacy' in l]}"
+            )
+
+        assert push_frames >= 10, (
+            f"Push model active but only {push_frames} frames. Expected 10+.\n"
+            f"Push lines: {[l for l in log.split(chr(10)) if '[push]' in l][:5]}"
         )
-        if used_push:
-            print("  SCK push-model active")
+
+        # Extract FPS from last push line
+        import re
+        fps_matches = re.findall(r"fps:(\d+\.?\d*)", log)
+        if fps_matches:
+            last_fps = float(fps_matches[-1])
+            print(f"  SCK push-model: {push_frames} frames, {last_fps:.0f} FPS")
+            assert last_fps >= 5, f"Push model FPS too low: {last_fps}"
         else:
-            print("  SCK push-model fell back to legacy (static desktop)")
+            print(f"  SCK push-model: {push_frames} frames")
+
+    def test_push_model_tablet_receives_frames(self, adb: Adb, bt_connected: ScreenshotServer):
+        """Verify tablet actually receives push-model stream frames."""
+        import subprocess as sp
+
+        adb.shell("uiautomator dump /sdcard/ui.xml")
+        xml = adb.shell("cat /sdcard/ui.xml")
+        if "btn_stream" not in xml:
+            pytest.skip("Stream button not visible")
+
+        if 'text="Stop"' in xml and "btn_stream" in xml:
+            adb.tap_button("btn_stream")
+            time.sleep(5)
+
+        adb.clear_logcat()
+        time.sleep(1)
+        assert adb.tap_button("btn_stream"), "Stream button not found"
+
+        # Open TextEdit to trigger SCK frames
+        sp.run(["osascript", "-e", '''
+            tell app "TextEdit" to activate
+            tell app "System Events" to tell process "TextEdit"
+                try
+                    click menu item "New" of menu "File" of menu bar 1
+                end try
+                set frontmost to true
+            end tell
+        '''], timeout=10)
+        time.sleep(8)
+        sp.run(["osascript", "-e", 'tell app "TextEdit" to quit saving no'], timeout=5)
+        time.sleep(3)
+
+        log = adb.logcat("BtScreenshot")
+        frame_count = len(re.findall(r"Stream \[full\]|Stream frame", log))
+
+        adb.tap_button("btn_stream")
+        time.sleep(2)
+
+        assert frame_count >= 10, (
+            f"Tablet received only {frame_count} stream frames, expected 10+.\n"
+            f"Log: {log[:500]}"
+        )
+        # Check hashes changed (screen content updated)
+        unique_hashes = set(re.findall(r"hash=([a-f0-9]+)", log))
+        print(f"  Tablet received {frame_count} frames, {len(unique_hashes)} unique hashes")
+        assert len(unique_hashes) >= 2, (
+            f"Tablet frames all identical — screen changes not reflected"
+        )
 
 
 class TestDeltaStreaming:
