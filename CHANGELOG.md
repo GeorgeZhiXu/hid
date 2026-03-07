@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.2.1 (2026-03-07)
+
+### Features
+- **Auto-detect Mac foreground app** — Mac server detects active app (Photoshop, Krita, OneNote, etc.) and sends to tablet. Tablet auto-switches shortcut preset and pressure curve. Toast shows "→ Photoshop" on switch.
+- **Per-app pressure override** — whiteboard apps (OneNote, Whiteboard) automatically use 90% pressure floor for visible strokes; drawing apps use the user's setting.
+- **Settings toggle** — "Auto-switch shortcuts by Mac app" (default on). Disable to keep manual preset selection.
+
+### Improvements
+- **Continuous BT message loop** — RFCOMM read loop upgraded from one-shot WiFi info to continuous dispatcher handling `wifi:` and `app:` messages.
+
 ## v1.2.0 (2026-03-07)
 
 ### Features
