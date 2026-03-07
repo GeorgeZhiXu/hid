@@ -22,6 +22,11 @@ Screenshots can appear blurry at current fixed 1280px/35% quality. Auto-detect t
 - BT only (~4s): lower resolution (960px), lower quality (25%)
 Also detect the tablet's screen resolution and match the screenshot dimensions to the active drawing area, avoiding unnecessary downscaling when the tablet can display more detail.
 
+### SCK push-model streaming
+Replace the current poll-based streaming (`captureScreenLegacy()` in a loop at ~20 FPS) with SCK's callback-driven push model. The `stream(_:didOutputSampleBuffer:)` callback would directly encode and send each frame, eliminating subprocess overhead and enabling 30+ FPS.
+**Current state:** SCK works for single screenshots but `grabFrame()` returns stale buffers during continuous streaming. The push model avoids this by never polling — frames are sent as they arrive from the compositor.
+**Approach:** Stream callback → encode JPEG → write to socket. Frame skipping via dirty-rect comparison (VNC-style). Fallback to legacy `screencapture` on macOS < 12.3.
+
 ### Windows support
 The Mac screenshot-server is macOS-only (IOBluetooth, screencapture). Create a Windows equivalent using Win32 Bluetooth APIs and screen capture.
 
@@ -34,17 +39,8 @@ Implementation: Android sends ocus:x,y,w,h\n\ over RFCOMM/WiFi before \screensh
 
 ## Mid-term
 
-### ~~ScreenCaptureKit streaming~~ (Implemented v0.8.0)
-Replace `screencapture` subprocess with macOS ScreenCaptureKit for lower-latency continuous capture. Could improve stream FPS from ~8 to 30+.
-
-**Design principle:** Detect at runtime whether ScreenCaptureKit is available (macOS 12.3+). If yes, use it for ~30 FPS streaming and ~16ms screenshot latency. If no, fall back to `screencapture` subprocess (current approach, works on macOS 10.x+). The server should auto-select the best available method without user configuration.
-
-**Benefits over screencapture:**
-- In-process callback vs subprocess spawn per frame
-- Direct memory buffer vs disk I/O (write + read JPEG)
-- 30-60 FPS vs 5-8 FPS for streaming
-- ~16ms vs ~150ms capture latency
-- Per-window capture possible (not just full screen)
+### ~~ScreenCaptureKit streaming~~ (Partially implemented v0.8.0)
+SCK works for single screenshots (0ms capture). SCK streaming via poll-based `grabFrame()` has stale buffer issues (resolved by falling back to legacy screencapture). Push-model streaming (callback-driven) is the proper fix — see "SCK push-model streaming" in near-term.
 
 ### ~~Delta screenshot compression~~ (Implemented v1.0.0)
 Only send pixels that changed since the last screenshot. With ScreenCaptureKit frames in memory, pixel-level diffing between consecutive frames is straightforward. For drawing apps where only a small brush area changes per stroke, delta frames could be **1-5KB instead of 70KB** — enabling near-real-time feedback.

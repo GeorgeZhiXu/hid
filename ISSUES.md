@@ -11,18 +11,18 @@
 **Investigation notes:** Android logs show "BT turning off — closing server socket" and "Screenshot target device" but no "Starting RFCOMM server" after BT re-enable. The server loop's retry mechanism may not be re-entering properly.
 
 
-### WiFi stream fails after single screenshot ("Broken pipe")
-**Status:** Resolved
-**Symptoms:** After taking a WiFi screenshot, tapping Stream fails with "Broken pipe" or "no frames received". Stream works fine on a fresh WiFi connection (without prior screenshot).
-**Root cause:** The Mac's `handleWifiClient()` keeps the TCP connection open in a command loop after processing "screenshot". Android reuses the same `wifiSocket` for "stream". But the socket state becomes inconsistent — possibly because the Mac's read loop doesn't properly transition between single-shot and streaming modes, or the screenshot response leaves partial data in the buffer.
-**Fix:** `startStream()` now opens a FRESH TCP connection instead of reusing the screenshot socket. Streaming and screenshots use separate TCP connections, avoiding socket state confusion when switching between request-response and push modes.
+### WiFi stream ECONNREFUSED after screenshot
+**Status:** Resolved in v1.1.3
+**Symptoms:** After taking a WiFi screenshot, tapping Stream fails with ECONNREFUSED. Mac server only accepts one WiFi client; the screenshot socket was still open when streaming tried to connect.
+**Root cause:** `startStream()` opened a fresh TCP connection but didn't close the existing `wifiSocket` first. Mac server only accepts one client on port 9877.
+**Fix:** `startStream()` now closes `wifiSocket` before opening the stream connection.
 
-### ScreenCaptureKit delta streaming stalls after 1 frame
-**Status:** Open — workaround in place
-**Symptoms:** When using SCK delta path for streaming, only 1 key frame is sent, then the stream stalls. Legacy screencapture path works at 20+ FPS.
-**Root cause:** The SCK frame buffer management (previousBuffer/latestBuffer) in the adaptive FPS logic conflicts with the delta streaming's need for consecutive frame comparison. After the first key frame, `capture.previousFrame` may be nil or stale because the adaptive FPS logic skipped/replaced it.
-**Workaround:** Streaming currently uses the legacy screencapture subprocess path (20 FPS). SCK is used for single screenshots (0ms capture latency). The flag `useScKForStream = false` in streamLoop controls this.
-**Impact:** Streaming FPS is ~20 (legacy) instead of ~30+ (SCK). Single screenshots benefit from SCK at 0ms capture.
+### SCK grabFrame() returns stale buffers during streaming
+**Status:** Resolved — root cause identified and fixed in v1.1.3
+**Symptoms:** Stream frames never change on tablet even though Mac screen changes. All frames have identical content hash. 480 frames received at 20 FPS but all identical.
+**Root cause:** Two issues: (1) SCK's adaptive FPS filter (`hasPixelsChanged`) was suppressing frame buffer updates during streaming, causing `grabFrame()` to return stale data; (2) `captureScreen()` routed to SCK even during streaming, instead of the legacy `screencapture` subprocess.
+**Fix:** Added `streamingMode` flag to bypass adaptive FPS filter during streaming. Also forced `captureScreenLegacy()` in `streamLoop` since SCK's pull-based `grabFrame()` is fundamentally unsuitable for continuous streaming.
+**Current state:** Streaming works via legacy `screencapture` at ~20 FPS. SCK used for single screenshots (~0ms). SCK push-model streaming (callback-driven, VNC-style) planned as replacement.
 
 ### macOS `openRFCOMMChannelSync` always fails synchronously
 **Status:** Accepted — workaround in place
