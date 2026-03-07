@@ -24,7 +24,7 @@ class TestBtScreenshot:
 
     def test_mac_capture_logged(self, bt_connected: ScreenshotServer):
         log = bt_connected.read_log()
-        assert re.search(r"capture:|\[SCK\]", log), (
+        assert re.search(r"capture:|\[SCK\]|\[push\]", log), (
             "Mac capture not found in server log"
         )
 
@@ -113,7 +113,7 @@ class TestSCKPushModel:
         if "SCK push-model" not in log:
             pytest.skip("Push model not attempted (SCK may be unavailable)")
         # Push model was attempted — verify it either worked or fell back gracefully
-        used_push = "[push-key]" in log or "[push-delta]" in log
+        used_push = "[push]" in log or "[push-key]" in log or "[push-delta]" in log
         fell_back = "falling back to legacy" in log
         assert used_push or fell_back, (
             "Push model neither delivered frames nor fell back to legacy"
