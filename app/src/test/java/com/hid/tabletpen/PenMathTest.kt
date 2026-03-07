@@ -172,17 +172,25 @@ class PenMathTest {
     // ---- computeAdaptiveQuality ----
 
     @Test
-    fun `fast WiFi gets high quality`() {
+    fun `fast WiFi gets best quality`() {
         // 500KB in 200ms = 2.5MB/s
         val (q, max) = PenMath.computeAdaptiveQuality(200, 500_000)
+        assertEquals(80, q)
+        assertEquals(2560, max)
+    }
+
+    @Test
+    fun `medium WiFi gets good quality`() {
+        // 100KB in 500ms = 200KB/s
+        val (q, max) = PenMath.computeAdaptiveQuality(500, 100_000)
         assertEquals(60, q)
         assertEquals(1920, max)
     }
 
     @Test
-    fun `medium WiFi gets medium quality`() {
-        // 100KB in 500ms = 200KB/s
-        val (q, max) = PenMath.computeAdaptiveQuality(500, 100_000)
+    fun `slow WiFi gets medium quality`() {
+        // 60KB in 800ms = 75KB/s
+        val (q, max) = PenMath.computeAdaptiveQuality(800, 60_000)
         assertEquals(40, q)
         assertEquals(1280, max)
     }
@@ -196,17 +204,17 @@ class PenMathTest {
     }
 
     @Test
-    fun `no data returns default`() {
+    fun `no data returns best`() {
         val (q, max) = PenMath.computeAdaptiveQuality(0, 0)
-        assertEquals(35, q)
-        assertEquals(1280, max)
+        assertEquals(80, q)
+        assertEquals(2560, max)
     }
 
     @Test
-    fun `negative values return default`() {
+    fun `negative values return best`() {
         val (q, max) = PenMath.computeAdaptiveQuality(-1, -1)
-        assertEquals(35, q)
-        assertEquals(1280, max)
+        assertEquals(80, q)
+        assertEquals(2560, max)
     }
 }
 

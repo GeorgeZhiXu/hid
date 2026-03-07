@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.2.0 (2026-03-07)
+
+### Features
+- **SCK push-model streaming** — 29 FPS at native resolution (was 6 FPS with legacy `screencapture` subprocess). ScreenCaptureKit callback directly encodes and sends frames with back-pressure. 3ms encode vs 140ms legacy. Automatic fallback to legacy on macOS < 12.3 or when SCK is unavailable.
+- **Configurable screenshot/stream quality** — new Settings: Auto, Low, Medium, Good, Best. Separate presets for screenshots and streaming. Best streams at native display resolution (1920x1080) at 80% JPEG quality.
+- **Auto quality defaults to Best on WiFi** — starts at full quality, degrades only on slow/BT connections. No more unnecessary downscaling on fast networks.
+
+### Improvements
+- **SCK captures at native display resolution** — no resize overhead for push-model streaming. Direct JPEG encode at 11ms vs 57ms with resize.
+- **SCK queueDepth increased to 8** — fixes buffer pool exhaustion that caused SCK callbacks to stop after 3 frames.
+- **WiFi socket cleanup before streaming** — closes screenshot socket before opening stream connection to avoid ECONNREFUSED.
+
+### Testing
+- **SCK push-model E2E tests** — verifies push frames are delivered at 5+ FPS, tablet receives frames with changing content
+- **Cursor-trigger test** — verifies HID cursor movement triggers SCK streaming frames
+- **SCK standalone diagnostic** — `test/sck-test.swift` verifies SCK callback delivery independently
+
 ## v1.1.3 (2026-03-06)
 
 ### Fixes

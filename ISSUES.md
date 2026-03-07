@@ -17,12 +17,12 @@
 **Root cause:** `startStream()` opened a fresh TCP connection but didn't close the existing `wifiSocket` first. Mac server only accepts one client on port 9877.
 **Fix:** `startStream()` now closes `wifiSocket` before opening the stream connection.
 
-### SCK doesn't deliver frames for cursor-only changes
-**Status:** Open — by design (macOS limitation)
-**Symptoms:** SCK push-model streaming gets 0 frames when only the cursor moves. Only 3 frames delivered at startup, then nothing until a window changes (open/close app, scroll, type).
-**Root cause:** macOS ScreenCaptureKit is compositor-event-driven. It only delivers frames when **window content** changes. Cursor movement alone doesn't trigger the compositor to render a new frame. This is by design — the cursor is composited separately by the WindowServer.
-**Impact:** SCK push-model streaming (30 FPS, delta compression) only activates when the user is actively using apps on the Mac. For cursor-tracking on a static desktop, legacy `screencapture` subprocess (~6 FPS) is used as fallback.
-**Workaround:** The 3-second probe with automatic fallback ensures streaming always works. During actual drawing (cursor moves + app renders strokes), SCK should deliver frames and the push model should activate.
+### SCK push-model requires screen content changes to activate
+**Status:** Resolved — queueDepth fix + fallback
+**Symptoms:** SCK push-model got 0 frames during 3s probe, fell back to legacy.
+**Root cause:** `queueDepth = 3` caused CVPixelBuffer pool exhaustion — SCK had no free buffers to deliver new frames. After increasing to 8, SCK delivers 24+ FPS continuously.
+**Note:** SCK is compositor-event-driven. On a completely static desktop with no cursor/window activity, frames may not be delivered. The 3-second probe with TextEdit window open ensures activation. Cursor movement via HID also triggers frames.
+**Fix:** queueDepth 3→8, automatic fallback to legacy if probe fails.
 
 ### macOS `openRFCOMMChannelSync` always fails synchronously
 **Status:** Accepted — workaround in place
