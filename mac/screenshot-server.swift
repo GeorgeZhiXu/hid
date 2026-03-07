@@ -112,14 +112,16 @@ class SCKCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         lock.unlock()
 
         print("  Push stream started (fd=\(fd))")
+        return sem
+    }
 
-        // Start stop-reader thread: blocking read on fd for "stop" command
+    /// Start the stop-reader thread. Call only after confirming push model is delivering frames.
+    func startStopReader(fd: Int32) {
         DispatchQueue.global(qos: .utility).async { [weak self] in
             var buf = [UInt8](repeating: 0, count: 64)
             while true {
                 let n = Darwin.read(fd, &buf, buf.count)
                 if n <= 0 {
-                    // Client disconnected
                     self?.stopPushStream()
                     return
                 }
@@ -129,8 +131,6 @@ class SCKCapture: NSObject, SCStreamOutput, SCStreamDelegate {
                 }
             }
         }
-
-        return sem
     }
 
     /// Stop push-model streaming and signal the done semaphore.
@@ -743,19 +743,23 @@ func handleWifiClient(fd: Int32) {
                 if #available(macOS 12.3, *), let capture = sckCapture as? SCKCapture,
                    capture.running {
                     // Push-model: SCK callback drives frame encoding + sending
-                    print("WiFi: using SCK push-model")
+                    print("WiFi: trying SCK push-model")
                     let sem = capture.startPushStream(fd: fd, params: params)
-                    // Wait up to 3s for first frame; if none arrive, SCK is stale — fall back
+                    // Probe: wait up to 3s for first frame
                     let result = sem.wait(timeout: .now() + 3.0)
                     if result == .timedOut && capture.pushFrameCount == 0 {
-                        print("WiFi: SCK push-model sent 0 frames in 3s — falling back to legacy")
+                        // SCK not delivering frames — fall back to legacy
+                        print("WiFi: SCK push-model no frames — falling back to legacy")
                         capture.stopPushStream()
                     } else if result == .timedOut {
-                        // Frames are flowing, keep waiting
-                        sem.wait()
+                        // Frames flowing — start stop-reader and keep streaming
+                        print("WiFi: SCK push-model active (\(capture.pushFrameCount) frames in 3s)")
+                        capture.startStopReader(fd: fd)
+                        sem.wait()  // block until stop or disconnect
                         capture.stopPushStream()
                         usedPush = true
                     } else {
+                        // Semaphore signaled (stop/disconnect already)
                         capture.stopPushStream()
                         usedPush = true
                     }
