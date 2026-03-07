@@ -63,11 +63,24 @@ class TestStreaming:
         assert adb.tap_button("btn_stream"), "Stream button not found"
         time.sleep(15)  # WiFi TCP connection + first frames need time
 
-        # Draw while streaming to generate screen changes
-        adb.swipe(500, 500, 900, 500, 300)
+        # Change the Mac screen during streaming to verify content updates
+        # Toggle a full-screen bright window to create obvious pixel changes
+        import subprocess as sp
+        time.sleep(2)  # capture baseline frames first
+        sp.run(["osascript", "-e", '''
+            tell app "TextEdit" to activate
+            tell app "System Events" to tell process "TextEdit"
+                try
+                    click menu item "New" of menu "File" of menu bar 1
+                end try
+                set frontmost to true
+            end tell
+        '''], timeout=10)
+        time.sleep(4)
+        sp.run(["osascript", "-e", '''
+            tell app "TextEdit" to quit saving no
+        '''], timeout=5)
         time.sleep(3)
-        adb.swipe(600, 400, 600, 700, 300)
-        time.sleep(5)
 
         log = adb.logcat("BtScreenshot")
         frame_count = len(re.findall(r"Stream frame|Stream \[", log))
@@ -76,13 +89,15 @@ class TestStreaming:
         adb.tap_button("btn_stream")
         time.sleep(2)
 
-        assert frame_count >= 1, f"No stream frames received. Log:\n{log[:500]}"
-        print(f"  {frame_count} frames received")
+        assert frame_count >= 5, f"Too few stream frames ({frame_count}). Log:\n{log[:500]}"
 
-        # Check content variety
-        unique_hashes = len(set(re.findall(r"hash=([a-f0-9]+)", log)))
-        if unique_hashes >= 2:
-            print(f"  {unique_hashes} unique frame hashes (content changed)")
+        # Check content variety (soft check — 4-pixel sample may miss small changes)
+        unique_hashes = set(re.findall(r"hash=([a-f0-9]+)", log))
+        print(f"  {frame_count} frames, {len(unique_hashes)} unique hashes")
+        if len(unique_hashes) >= 2:
+            print(f"  Content verified: screen changed during stream")
+        else:
+            print(f"  Warning: hash constant — 4-pixel sample may not cover changed area")
 
 
 class TestDeltaStreaming:

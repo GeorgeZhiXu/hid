@@ -34,6 +34,8 @@ class SCKCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     private var latestBuffer: CVPixelBuffer?
     private let lock = NSLock()
     private var running = false
+    /// When true, skip adaptive FPS filtering — every frame updates latestBuffer
+    var streamingMode = false
 
     func start() async throws {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
@@ -85,13 +87,15 @@ class SCKCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         guard type == .screen else { return }
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
-        // Adaptive FPS: skip if screen hasn't changed
-        if let prev = previousBuffer, !hasPixelsChanged(prev, pixelBuffer) {
-            unchangedCount += 1
-            if unchangedCount < 30 { return } // skip up to 30 frames (~1s at 30fps), then send 1 keepalive
-            unchangedCount = 0
-        } else {
-            unchangedCount = 0
+        // Adaptive FPS: skip if screen hasn't changed (only for single screenshots, not streaming)
+        if !streamingMode {
+            if let prev = previousBuffer, !hasPixelsChanged(prev, pixelBuffer) {
+                unchangedCount += 1
+                if unchangedCount < 30 { return } // skip up to 30 frames (~1s at 30fps), then send 1 keepalive
+                unchangedCount = 0
+            } else {
+                unchangedCount = 0
+            }
         }
 
         lock.lock()
@@ -564,6 +568,12 @@ var streamPreviousCGImage: CGImage? = nil
 func streamLoop(fd: Int32, params: CaptureParams = CaptureParams()) {
     streamFramesSinceKey = 0
     streamPreviousCGImage = nil
+    // Disable adaptive FPS filtering during streaming — every SCK frame should be available
+    #if canImport(ScreenCaptureKit)
+    if #available(macOS 12.3, *) {
+        (sckCapture as? SCKCapture)?.streamingMode = true
+    }
+    #endif
     // Make socket non-blocking to check for "stop" command while streaming
     let flags = fcntl(fd, F_GETFL)
     fcntl(fd, F_SETFL, flags | O_NONBLOCK)
@@ -586,8 +596,8 @@ func streamLoop(fd: Int32, params: CaptureParams = CaptureParams()) {
         // Try delta compression for streaming (SCK path only)
         var sent = false
 
-        // Force legacy path for streaming (SCK delta path stalls after 1 frame)
-        // SCK works great for single screenshots but needs more work for continuous streaming
+        // Force legacy path for streaming — SCK delta path needs more work
+        // (adaptive FPS filter is fixed but SCK frame buffering still causes issues)
         let useScKForStream = false
         if useScKForStream {
         #if canImport(ScreenCaptureKit)
@@ -663,8 +673,13 @@ func streamLoop(fd: Int32, params: CaptureParams = CaptureParams()) {
         fcntl(fd, F_SETFL, flags | O_NONBLOCK)
     }
 
-    // Restore blocking mode
+    // Restore blocking mode and re-enable adaptive FPS
     fcntl(fd, F_SETFL, flags)
+    #if canImport(ScreenCaptureKit)
+    if #available(macOS 12.3, *) {
+        (sckCapture as? SCKCapture)?.streamingMode = false
+    }
+    #endif
 }
 
 // MARK: - Bluetooth RFCOMM Server
