@@ -23,3 +23,5 @@ remarkable/register_hid
 remarkable/register_hid_sdp
 remarkable/sdp_sniff
 sony-dpt/tabletpen-arm64
+__pycache__/
+*.pyc
