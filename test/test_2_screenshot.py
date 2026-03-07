@@ -100,6 +100,26 @@ class TestStreaming:
             print(f"  Warning: hash constant — 4-pixel sample may not cover changed area")
 
 
+class TestSCKPushModel:
+    """Verify SCK push-model is attempted and falls back gracefully."""
+
+    def test_push_model_probe_and_fallback(self, adb: Adb, bt_connected: ScreenshotServer):
+        """Push model is attempted; falls back to legacy on static desktop."""
+        log = bt_connected.read_log()
+        if "SCK push-model" not in log:
+            pytest.skip("Push model not attempted (SCK may be unavailable)")
+        # Push model was attempted — verify it either worked or fell back gracefully
+        used_push = "[push-key]" in log or "[push-delta]" in log
+        fell_back = "falling back to legacy" in log
+        assert used_push or fell_back, (
+            "Push model neither delivered frames nor fell back to legacy"
+        )
+        if used_push:
+            print("  SCK push-model active")
+        else:
+            print("  SCK push-model fell back to legacy (static desktop)")
+
+
 class TestDeltaStreaming:
     """Test delta compression during streaming."""
 

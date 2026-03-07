@@ -44,6 +44,7 @@ class SCKCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     private var pushPrevCGImage: CGImage?
     private var pushKeyCounter = 0
     var pushFrameCount = 0
+    var callbackCount = 0  // total SCK callbacks received (for diagnostics)
     private var pushStartTime: CFAbsoluteTime = 0
     private var pushDoneSemaphore: DispatchSemaphore?
     private let encodeQueue = DispatchQueue(label: "com.tabletpen.encode", qos: .userInitiated)
@@ -163,6 +164,7 @@ class SCKCapture: NSObject, SCStreamOutput, SCStreamDelegate {
                 of type: SCStreamOutputType) {
         guard type == .screen else { return }
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        callbackCount += 1
 
         lock.lock()
         let streamFd = pushFd
@@ -745,8 +747,14 @@ func handleWifiClient(fd: Int32) {
                     // Push-model: SCK callback drives frame encoding + sending
                     print("WiFi: trying SCK push-model")
                     let sem = capture.startPushStream(fd: fd, params: params)
-                    // Probe: wait up to 3s for first frame
-                    let result = sem.wait(timeout: .now() + 3.0)
+                    // Nudge: move cursor 1px to force SCK to deliver a frame
+                    if let moveEvent = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
+                                                mouseCursorPosition: CGEvent(source: nil)!.location,
+                                                mouseButton: .left) {
+                        moveEvent.post(tap: .cghidEventTap)
+                    }
+                    // Probe: wait up to 2s for first frame
+                    let result = sem.wait(timeout: .now() + 2.0)
                     if result == .timedOut && capture.pushFrameCount == 0 {
                         // SCK not delivering frames — fall back to legacy
                         print("WiFi: SCK push-model no frames — falling back to legacy")

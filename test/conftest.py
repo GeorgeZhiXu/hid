@@ -187,7 +187,13 @@ class ScreenshotServer:
             self.process = None
         if self.log_file:
             self.log_file.close()
+        # Print server log summary for debugging
         if self.log_path and os.path.exists(self.log_path):
+            with open(self.log_path) as f:
+                for line in f:
+                    line = line.rstrip()
+                    if any(k in line.lower() for k in ['push', 'fallback', 'legacy', '[push-', 'capture:']):
+                        print(f"  [server] {line}")
             os.unlink(self.log_path)
             self.log_path = None
 
