@@ -82,13 +82,13 @@ object PenMath {
      * Returns (jpegQuality 1-100, maxDimension in pixels).
      */
     fun computeAdaptiveQuality(transferMs: Long, transferBytes: Int): Pair<Int, Int> {
-        if (transferMs <= 0 || transferBytes <= 0) return Pair(35, 1280) // default
+        if (transferMs <= 0 || transferBytes <= 0) return Pair(80, 2560) // default: start with Best
         val bytesPerSec = transferBytes * 1000L / transferMs
         return when {
-            bytesPerSec > 2_000_000 -> Pair(80, 2560)  // WiFi very fast: >2MB/s → Best
-            bytesPerSec > 500_000 -> Pair(60, 1920)     // WiFi fast: >500KB/s → Good
-            bytesPerSec > 100_000 -> Pair(40, 1280)     // WiFi medium: >100KB/s → Medium
-            else -> Pair(25, 960)                         // BT or slow: <=100KB/s → Low
+            bytesPerSec > 500_000 -> Pair(80, 2560)     // WiFi: >500KB/s → Best (native res)
+            bytesPerSec > 100_000 -> Pair(60, 1920)     // WiFi slow: >100KB/s → Good
+            bytesPerSec > 50_000 -> Pair(40, 1280)      // Slow: >50KB/s → Medium
+            else -> Pair(25, 960)                         // BT: <=50KB/s → Low
         }
     }
 
