@@ -61,12 +61,16 @@ class TestStreaming:
         adb.clear_logcat()
         time.sleep(1)
         assert adb.tap_button("btn_stream"), "Stream button not found"
-        time.sleep(15)  # WiFi TCP connection + first frames need time
 
-        # Change the Mac screen during streaming to verify content updates
-        # Toggle a full-screen bright window to create obvious pixel changes
+        # Immediately move cursor to trigger SCK push-model during 3s probe
+        # adb swipe sends HID events → Mac cursor moves → screen changes → SCK delivers frames
+        adb.swipe(500, 400, 800, 400, 200)
+        time.sleep(1)
+        adb.swipe(800, 400, 500, 600, 200)
+        time.sleep(3)
+
+        # Open/close TextEdit for a more visible screen change
         import subprocess as sp
-        time.sleep(2)  # capture baseline frames first
         sp.run(["osascript", "-e", '''
             tell app "TextEdit" to activate
             tell app "System Events" to tell process "TextEdit"
