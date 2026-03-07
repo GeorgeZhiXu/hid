@@ -92,6 +92,21 @@ object PenMath {
     }
 
     /**
+     * Resolve quality setting: if AUTO, use adaptive; otherwise use preset values.
+     */
+    fun resolveQuality(
+        quality: CaptureQuality,
+        transferMs: Long,
+        transferBytes: Int
+    ): Pair<Int, Int> {
+        return if (quality == CaptureQuality.AUTO) {
+            computeAdaptiveQuality(transferMs, transferBytes)
+        } else {
+            Pair(quality.jpegQuality, quality.maxDim)
+        }
+    }
+
+    /**
      * Detect whether a bitmap is light or dark by sampling pixel brightness.
      * Returns Color.BLACK for light backgrounds, Color.WHITE for dark.
      */

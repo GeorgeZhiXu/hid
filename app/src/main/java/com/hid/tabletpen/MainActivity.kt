@@ -165,6 +165,8 @@ class MainActivity : AppCompatActivity(),
             }
         }
         btScreenshot.startServer()
+        btScreenshot.screenshotQuality = settings.screenshotQuality
+        btScreenshot.streamQuality = settings.streamQuality
 
         applySettingsToDrawPad()
 
@@ -443,6 +445,24 @@ class MainActivity : AppCompatActivity(),
         }
         layout.addView(ghostCheck)
 
+        // Screenshot quality
+        layout.addView(TextView(this).apply { text = "Screenshot Quality"; setPadding(0, 16, 0, 4) })
+        val ssQualitySpinner = Spinner(this).apply {
+            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item,
+                CaptureQuality.LABELS)
+            setSelection(settings.screenshotQuality.ordinal)
+        }
+        layout.addView(ssQualitySpinner)
+
+        // Stream quality
+        layout.addView(TextView(this).apply { text = "Stream Quality"; setPadding(0, 16, 0, 4) })
+        val streamQualitySpinner = Spinner(this).apply {
+            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item,
+                CaptureQuality.LABELS)
+            setSelection(settings.streamQuality.ordinal)
+        }
+        layout.addView(streamQualitySpinner)
+
         // Shortcut preset
         layout.addView(TextView(this).apply { text = "Shortcut Preset"; setPadding(0, 16, 0, 4) })
         val presetNames = SHORTCUT_PRESETS.keys.toList()
@@ -600,9 +620,13 @@ class MainActivity : AppCompatActivity(),
                     strokeColor = StrokeColor.entries[strokeSpinner.selectedItemPosition],
                     autoRecapture = recaptureCheck.isChecked,
                     showGhostStroke = ghostCheck.isChecked,
+                    screenshotQuality = CaptureQuality.entries[ssQualitySpinner.selectedItemPosition],
+                    streamQuality = CaptureQuality.entries[streamQualitySpinner.selectedItemPosition],
                     shortcuts = SHORTCUT_PRESETS[presetNames[presetSpinner.selectedItemPosition]] ?: DEFAULT_SHORTCUTS
                 )
                 AppSettings.save(this, settings)
+                btScreenshot.screenshotQuality = settings.screenshotQuality
+                btScreenshot.streamQuality = settings.streamQuality
                 applySettingsToDrawPad()
                 setupShortcutButtons()
                 applyOrientation()

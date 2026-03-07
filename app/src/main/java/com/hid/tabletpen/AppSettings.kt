@@ -94,6 +94,18 @@ val SHORTCUT_PRESETS = mapOf(
     ),
 )
 
+enum class CaptureQuality(val label: String, val jpegQuality: Int, val maxDim: Int) {
+    AUTO("Auto", 0, 0),           // adaptive based on network speed
+    LOW("Low", 25, 960),           // BT-friendly
+    MEDIUM("Medium", 40, 1280),    // balanced
+    GOOD("Good", 60, 1920),        // high quality
+    BEST("Best", 80, 2560);        // max quality, native resolution
+
+    companion object {
+        val LABELS = entries.map { it.label }
+    }
+}
+
 enum class InputMode { DIGITIZER, MOUSE }
 
 enum class OrientationMode { AUTO, PORTRAIT, LANDSCAPE }
@@ -149,6 +161,8 @@ data class AppSettings(
     val strokeColor: StrokeColor = StrokeColor.AUTO,
     val autoRecapture: Boolean = false,
     val showGhostStroke: Boolean = true,
+    val screenshotQuality: CaptureQuality = CaptureQuality.AUTO,
+    val streamQuality: CaptureQuality = CaptureQuality.AUTO,
     val shortcuts: List<ShortcutConfig> = DEFAULT_SHORTCUTS
 ) {
     companion object {
@@ -169,6 +183,8 @@ data class AppSettings(
         private const val KEY_STROKE_COLOR = "stroke_color"
         private const val KEY_AUTO_RECAPTURE = "auto_recapture"
         private const val KEY_GHOST_STROKE = "ghost_stroke"
+        private const val KEY_SCREENSHOT_QUALITY = "screenshot_quality"
+        private const val KEY_STREAM_QUALITY = "stream_quality"
         private const val KEY_SHORTCUTS = "shortcuts"
         private const val KEY_LAST_DEVICE = "last_device"
         private const val KEY_KNOWN_DEVICES = "known_devices"
@@ -238,6 +254,8 @@ data class AppSettings(
                 strokeColor = StrokeColor.entries.getOrElse(p.getInt(KEY_STROKE_COLOR, 0)) { StrokeColor.AUTO },
                 autoRecapture = p.getBoolean(KEY_AUTO_RECAPTURE, false),
                 showGhostStroke = p.getBoolean(KEY_GHOST_STROKE, true),
+                screenshotQuality = CaptureQuality.entries.getOrElse(p.getInt(KEY_SCREENSHOT_QUALITY, 0)) { CaptureQuality.AUTO },
+                streamQuality = CaptureQuality.entries.getOrElse(p.getInt(KEY_STREAM_QUALITY, 0)) { CaptureQuality.AUTO },
                 shortcuts = try {
                     val json = p.getString(KEY_SHORTCUTS, null)
                     if (json != null) {
@@ -266,6 +284,8 @@ data class AppSettings(
                 .putInt(KEY_STROKE_COLOR, s.strokeColor.ordinal)
                 .putBoolean(KEY_AUTO_RECAPTURE, s.autoRecapture)
                 .putBoolean(KEY_GHOST_STROKE, s.showGhostStroke)
+                .putInt(KEY_SCREENSHOT_QUALITY, s.screenshotQuality.ordinal)
+                .putInt(KEY_STREAM_QUALITY, s.streamQuality.ordinal)
                 .putString(KEY_SHORTCUTS, org.json.JSONArray(s.shortcuts.map { it.toJson() }).toString())
                 .apply()
         }

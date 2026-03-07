@@ -112,8 +112,12 @@ class BluetoothScreenshot(private val context: Context) {
     @Volatile private var lastTransferMs: Long = 0
     @Volatile private var lastTransferBytes: Int = 0
 
+    var screenshotQuality: CaptureQuality = CaptureQuality.AUTO
+    var streamQuality: CaptureQuality = CaptureQuality.AUTO
+
     private fun buildCommand(base: String): String {
-        val (quality, maxDim) = PenMath.computeAdaptiveQuality(lastTransferMs, lastTransferBytes)
+        val preset = if (base == "stream") streamQuality else screenshotQuality
+        val (quality, maxDim) = PenMath.resolveQuality(preset, lastTransferMs, lastTransferBytes)
         val sb = StringBuilder(base)
         sb.append(" q=$quality max=$maxDim")
         focusRect?.let { r ->

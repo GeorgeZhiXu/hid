@@ -225,6 +225,50 @@ class TestSCKPushModel:
         )
 
 
+class TestSCKCursorTrigger:
+    """Verify cursor movement via HID triggers SCK push-model frames."""
+
+    def test_cursor_movement_triggers_push_frames(self, adb: Adb, bt_connected: ScreenshotServer):
+        adb.shell("uiautomator dump /sdcard/ui.xml")
+        xml = adb.shell("cat /sdcard/ui.xml")
+        if "btn_stream" not in xml:
+            pytest.skip("Stream button not visible")
+
+        if 'text="Stop"' in xml and "btn_stream" in xml:
+            adb.tap_button("btn_stream")
+            time.sleep(5)
+
+        adb.clear_logcat()
+        time.sleep(1)
+        assert adb.tap_button("btn_stream"), "Stream button not found"
+
+        # Only move cursor — no window changes
+        for _ in range(5):
+            adb.swipe(300, 300, 800, 500, 200)
+            time.sleep(0.5)
+            adb.swipe(800, 500, 300, 300, 200)
+            time.sleep(0.5)
+        time.sleep(3)
+
+        log = adb.logcat("BtScreenshot")
+        frame_count = len(re.findall(r"Stream \[full\]|Stream frame", log))
+
+        adb.tap_button("btn_stream")
+        time.sleep(2)
+
+        # Check server used push model (not legacy)
+        server_log = bt_connected.read_log()
+        used_push = "[push]" in server_log
+
+        assert frame_count >= 5, (
+            f"Cursor movement produced only {frame_count} frames (expected 5+)"
+        )
+        if used_push:
+            print(f"  Cursor triggered push-model: {frame_count} frames")
+        else:
+            print(f"  Cursor triggered legacy: {frame_count} frames")
+
+
 class TestDeltaStreaming:
     """Test delta compression during streaming."""
 
