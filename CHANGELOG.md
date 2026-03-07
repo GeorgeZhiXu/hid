@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.1.3 (2026-03-06)
+
+### Fixes
+- **Fix input lag on Mac** — BT HID reports now sent on background thread instead of blocking the UI thread. Historical pen events used for local drawing only (not flooded over BT). Reduces BT report rate from ~240/s to ~60-120/s.
+- **Fix two-finger tap right-click** — single two-finger tap now reliably triggers right-click. Fixed: distance check used wrong finger's position, and tiny finger jitter during tap was falsely detected as scroll.
+- **Reject non-target BT connections** — incoming HID connections from non-target devices are immediately disconnected, preventing session hijacking.
+- **Auto-dismiss unwanted pairing popups** — intercepts `ACTION_PAIRING_REQUEST` for non-target devices and cancels bonding before system UI appears.
+
+### Improvements
+- **BT QoS hint** — HID registration requests guaranteed 8ms latency for responsive pen input
+- **View rendering coalesced to vsync** — `postInvalidateOnAnimation()` prevents redundant redraws
+- **Removed excessive logging** — no more per-event Log.d during pen/mouse movement
+
+### Testing
+- **Two-finger tap instrumented test** — 4 new tests verify multi-touch injection doesn't crash (single tap, repeated, varying positions, with jitter)
+
 ## v1.1.0 (2026-03-06)
 
 ### Features

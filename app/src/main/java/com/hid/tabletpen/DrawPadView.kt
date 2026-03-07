@@ -449,7 +449,7 @@ class DrawPadView @JvmOverloads constructor(
             return true
         }
 
-        // Stylus: single-pointer processing as before
+        // Stylus: process historical points for local drawing only (no BT report)
         for (i in 0 until event.historySize) {
             processPointer(
                 action = MotionEvent.ACTION_MOVE,
@@ -457,7 +457,8 @@ class DrawPadView @JvmOverloads constructor(
                 y = event.getHistoricalY(i),
                 pressure = event.getHistoricalPressure(i),
                 buttonState = event.buttonState,
-                toolType = event.getToolType(0)
+                toolType = event.getToolType(0),
+                dispatchHid = false
             )
         }
         // Extract tilt: magnitude + orientation → X/Y components
@@ -493,7 +494,8 @@ class DrawPadView @JvmOverloads constructor(
     private fun processPointer(
         action: Int, x: Float, y: Float, pressure: Float,
         buttonState: Int, toolType: Int,
-        tiltX: Float = 0f, tiltY: Float = 0f
+        tiltX: Float = 0f, tiltY: Float = 0f,
+        dispatchHid: Boolean = true
     ) {
         if (activeRect.isEmpty) return
 
@@ -528,7 +530,7 @@ class DrawPadView @JvmOverloads constructor(
         when (toolType) {
             MotionEvent.TOOL_TYPE_STYLUS, MotionEvent.TOOL_TYPE_ERASER -> {
                 when (inputMode) {
-                    InputMode.DIGITIZER -> processDigitizer(action, x, y, pressure, buttonState, toolType, tiltX, tiltY)
+                    InputMode.DIGITIZER -> processDigitizer(action, x, y, pressure, buttonState, toolType, tiltX, tiltY, dispatchHid)
                     InputMode.MOUSE -> processMouse(action, x, y, buttonState)
                 }
             }
@@ -537,7 +539,7 @@ class DrawPadView @JvmOverloads constructor(
             }
         }
 
-        invalidate()
+        postInvalidateOnAnimation()
     }
 
     private fun processFocusSelection(action: Int, x: Float, y: Float) {
@@ -568,7 +570,8 @@ class DrawPadView @JvmOverloads constructor(
     private fun processDigitizer(
         action: Int, x: Float, y: Float, pressure: Float,
         buttonState: Int, toolType: Int,
-        tiltX: Float = 0f, tiltY: Float = 0f
+        tiltX: Float = 0f, tiltY: Float = 0f,
+        dispatchHid: Boolean = true
     ) {
         val barrel = buttonState and MotionEvent.BUTTON_STYLUS_PRIMARY != 0
 
@@ -583,18 +586,22 @@ class DrawPadView @JvmOverloads constructor(
                 path.moveTo(x, y)
                 lastX = x
                 lastY = y
-                val nx = ((x - activeRect.left) / activeRect.width()).coerceIn(0f, 1f)
-                val ny = ((y - activeRect.top) / activeRect.height()).coerceIn(0f, 1f)
-                dispatchPen(tipDown = true, barrel = barrel, inRange = true, nx, ny, pressure, toolType, tiltX, tiltY)
+                if (dispatchHid) {
+                    val nx = ((x - activeRect.left) / activeRect.width()).coerceIn(0f, 1f)
+                    val ny = ((y - activeRect.top) / activeRect.height()).coerceIn(0f, 1f)
+                    dispatchPen(tipDown = true, barrel = barrel, inRange = true, nx, ny, pressure, toolType, tiltX, tiltY)
+                }
             }
             MotionEvent.ACTION_MOVE -> {
                 if (isDown) {
                     val distFromDown = (x - penDownX) * (x - penDownX) + (y - penDownY) * (y - penDownY)
                     if (!penStabilized && distFromDown <= DIGITIZER_CLICK_SLOP) {
                         // Within dead zone: send start position to stabilize tap
-                        val nx = ((penDownX - activeRect.left) / activeRect.width()).coerceIn(0f, 1f)
-                        val ny = ((penDownY - activeRect.top) / activeRect.height()).coerceIn(0f, 1f)
-                        dispatchPen(tipDown = true, barrel = barrel, inRange = true, nx, ny, pressure, toolType, tiltX, tiltY)
+                        if (dispatchHid) {
+                            val nx = ((penDownX - activeRect.left) / activeRect.width()).coerceIn(0f, 1f)
+                            val ny = ((penDownY - activeRect.top) / activeRect.height()).coerceIn(0f, 1f)
+                            dispatchPen(tipDown = true, barrel = barrel, inRange = true, nx, ny, pressure, toolType, tiltX, tiltY)
+                        }
                     } else {
                         // Exceeded dead zone: track actual position
                         cancelRadialMenu()
@@ -617,14 +624,18 @@ class DrawPadView @JvmOverloads constructor(
                             ghostLastX = x
                             ghostLastY = y
                         }
-                        val nx = ((x - activeRect.left) / activeRect.width()).coerceIn(0f, 1f)
-                        val ny = ((y - activeRect.top) / activeRect.height()).coerceIn(0f, 1f)
-                        dispatchPen(tipDown = true, barrel = barrel, inRange = true, nx, ny, pressure, toolType, tiltX, tiltY)
+                        if (dispatchHid) {
+                            val nx = ((x - activeRect.left) / activeRect.width()).coerceIn(0f, 1f)
+                            val ny = ((y - activeRect.top) / activeRect.height()).coerceIn(0f, 1f)
+                            dispatchPen(tipDown = true, barrel = barrel, inRange = true, nx, ny, pressure, toolType, tiltX, tiltY)
+                        }
                     }
                 } else {
-                    val nx = ((x - activeRect.left) / activeRect.width()).coerceIn(0f, 1f)
-                    val ny = ((y - activeRect.top) / activeRect.height()).coerceIn(0f, 1f)
-                    dispatchPen(tipDown = false, barrel = barrel, inRange = true, nx, ny, pressure, toolType, tiltX, tiltY)
+                    if (dispatchHid) {
+                        val nx = ((x - activeRect.left) / activeRect.width()).coerceIn(0f, 1f)
+                        val ny = ((y - activeRect.top) / activeRect.height()).coerceIn(0f, 1f)
+                        dispatchPen(tipDown = false, barrel = barrel, inRange = true, nx, ny, pressure, toolType, tiltX, tiltY)
+                    }
                 }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
@@ -636,9 +647,11 @@ class DrawPadView @JvmOverloads constructor(
                 dispatchPen(tipDown = false, barrel = false, inRange = false, nx, ny, 0f, toolType, 0f, 0f)
             }
             MotionEvent.ACTION_HOVER_ENTER, MotionEvent.ACTION_HOVER_MOVE -> {
-                val nx = ((x - activeRect.left) / activeRect.width()).coerceIn(0f, 1f)
-                val ny = ((y - activeRect.top) / activeRect.height()).coerceIn(0f, 1f)
-                dispatchPen(tipDown = false, barrel = barrel, inRange = true, nx, ny, 0f, toolType, tiltX, tiltY)
+                if (dispatchHid) {
+                    val nx = ((x - activeRect.left) / activeRect.width()).coerceIn(0f, 1f)
+                    val ny = ((y - activeRect.top) / activeRect.height()).coerceIn(0f, 1f)
+                    dispatchPen(tipDown = false, barrel = barrel, inRange = true, nx, ny, 0f, toolType, tiltX, tiltY)
+                }
             }
             MotionEvent.ACTION_HOVER_EXIT -> {
                 cursorX = -1f
@@ -795,6 +808,9 @@ class DrawPadView @JvmOverloads constructor(
     // Accumulate fractional scroll for smooth slow scrolling
     private var scrollAccumY = 0f
     private var scrollAccumX = 0f
+    // Track total two-finger displacement to distinguish tap from scroll
+    private var twoFingerDisplacement = 0f
+    private val TWO_FINGER_MOVE_SLOP = 15f  // px of cumulative movement before it's a scroll
 
     private fun processTrackpad(event: MotionEvent) {
         val action = event.actionMasked
@@ -814,11 +830,16 @@ class DrawPadView @JvmOverloads constructor(
 
             MotionEvent.ACTION_POINTER_DOWN -> {
                 trackFingerCount = pointerCount
-                if (pointerCount > trackMaxFingers) trackMaxFingers = pointerCount
+                if (pointerCount > trackMaxFingers) {
+                    trackMaxFingers = pointerCount
+                    // Reset: tiny single-finger movement before 2nd finger shouldn't kill tap
+                    trackMoved = false
+                }
                 if (pointerCount >= 2) {
                     trackF0LastX = event.getX(0); trackF0LastY = event.getY(0)
                     trackF1LastX = event.getX(1); trackF1LastY = event.getY(1)
                     trackLastDist = fingerDist(event)
+                    twoFingerDisplacement = 0f
                 }
             }
 
@@ -846,43 +867,45 @@ class DrawPadView @JvmOverloads constructor(
                     val avgDx = (d0x + d1x) / 2f
                     val avgDy = (d0y + d1y) / 2f
 
-                    // Distance change (fingers apart/together = pinch)
-                    val distDelta = dist - trackLastDist
-                    val isPinch = trackLastDist > 0 && kotlin.math.abs(distDelta) > trackLastDist * pinchThreshold
+                    // Track cumulative displacement to distinguish tap from scroll
+                    twoFingerDisplacement += kotlin.math.abs(avgDx) + kotlin.math.abs(avgDy)
 
-                    if (isPinch) {
-                        // --- Pinch → zoom (Ctrl+scroll) ---
+                    // Only process scroll/pinch once displacement exceeds slop
+                    if (twoFingerDisplacement > TWO_FINGER_MOVE_SLOP) {
                         trackMoved = true
-                        val scaleFactor = dist / trackLastDist
-                        onPinchZoom?.invoke(scaleFactor)
-                    } else {
-                        // --- Two finger drag → scroll ---
-                        // Accumulate for smooth slow scrolling
-                        scrollAccumY += -avgDy * scrollSensitivity / 2f
-                        scrollAccumX += -avgDx * scrollSensitivity / 2f
 
-                        // Send vertical scroll when accumulated enough
-                        val scrollY = scrollAccumY.toInt()
-                        if (scrollY != 0) {
-                            trackMoved = true
-                            onMouseEvent?.invoke(MouseEvent(
-                                leftButton = false, rightButton = false,
-                                dx = 0f, dy = 0f, scroll = scrollY.toFloat().coerceIn(-127f, 127f)
-                            ))
-                            scrollAccumY -= scrollY
-                        }
+                        // Distance change (fingers apart/together = pinch)
+                        val distDelta = dist - trackLastDist
+                        val isPinch = trackLastDist > 0 && kotlin.math.abs(distDelta) > trackLastDist * pinchThreshold
 
-                        // Send horizontal scroll (as separate event with negative dx hack)
-                        val scrollX = scrollAccumX.toInt()
-                        if (scrollX != 0) {
-                            trackMoved = true
-                            onMouseEvent?.invoke(MouseEvent(
-                                leftButton = false, rightButton = false,
-                                dx = 0f, dy = 0f,
-                                scroll = 0f,
-                                horizontalScroll = scrollX.toFloat().coerceIn(-127f, 127f)
-                            ))
-                            scrollAccumX -= scrollX
+                        if (isPinch) {
+                            // --- Pinch → zoom (Ctrl+scroll) ---
+                            val scaleFactor = dist / trackLastDist
+                            onPinchZoom?.invoke(scaleFactor)
+                        } else {
+                            // --- Two finger drag → scroll ---
+                            scrollAccumY += -avgDy * scrollSensitivity / 2f
+                            scrollAccumX += -avgDx * scrollSensitivity / 2f
+
+                            val scrollY = scrollAccumY.toInt()
+                            if (scrollY != 0) {
+                                onMouseEvent?.invoke(MouseEvent(
+                                    leftButton = false, rightButton = false,
+                                    dx = 0f, dy = 0f, scroll = scrollY.toFloat().coerceIn(-127f, 127f)
+                                ))
+                                scrollAccumY -= scrollY
+                            }
+
+                            val scrollX = scrollAccumX.toInt()
+                            if (scrollX != 0) {
+                                onMouseEvent?.invoke(MouseEvent(
+                                    leftButton = false, rightButton = false,
+                                    dx = 0f, dy = 0f,
+                                    scroll = 0f,
+                                    horizontalScroll = scrollX.toFloat().coerceIn(-127f, 127f)
+                                ))
+                                scrollAccumX -= scrollX
+                            }
                         }
                     }
 
@@ -890,7 +913,6 @@ class DrawPadView @JvmOverloads constructor(
                     trackF1LastX = f1x; trackF1LastY = f1y
                     trackLastDist = dist
                 }
-                invalidate()
             }
 
             MotionEvent.ACTION_POINTER_UP -> {
@@ -901,12 +923,16 @@ class DrawPadView @JvmOverloads constructor(
                 scrollAccumX = 0f
                 scrollAccumY = 0f
                 val elapsed = System.currentTimeMillis() - trackDownTime
-                val dist = kotlin.math.hypot(
+                // For single finger: check distance from down position
+                // For multi-finger: skip distance check (UP fires for a different finger than DOWN)
+                val dist = if (trackMaxFingers == 1) kotlin.math.hypot(
                     (event.x - trackDownX).toDouble(),
                     (event.y - trackDownY).toDouble()
-                ).toFloat()
+                ).toFloat() else 0f
 
-                if (elapsed < TAP_TIMEOUT && dist < TAP_SLOP && !trackMoved) {
+                val isTap = elapsed < TAP_TIMEOUT && !trackMoved && (trackMaxFingers >= 2 || dist < TAP_SLOP)
+
+                if (isTap) {
                     if (trackMaxFingers >= 2) {
                         // Two finger tap → right click
                         onMouseEvent?.invoke(MouseEvent(leftButton = false, rightButton = true, dx = 0f, dy = 0f))

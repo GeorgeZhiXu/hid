@@ -11,6 +11,7 @@ import android.bluetooth.BluetoothProfile
 import android.content.Context
 import android.util.Log
 import java.util.concurrent.Executors
+import java.util.concurrent.ExecutorService
 
 @SuppressLint("MissingPermission")
 class BluetoothHidManager(private val context: Context) {
@@ -31,6 +32,7 @@ class BluetoothHidManager(private val context: Context) {
     private var hidDevice: BluetoothHidDevice? = null
     private var connectedDevice: BluetoothDevice? = null
     private val executor = Executors.newSingleThreadExecutor()
+    private val reportExecutor: ExecutorService = Executors.newSingleThreadExecutor()
 
     val isConnected: Boolean get() = connectedDevice != null
     val connectedDeviceName: String? get() = connectedDevice?.name
@@ -100,6 +102,7 @@ class BluetoothHidManager(private val context: Context) {
     }
 
     fun stop() {
+        reportExecutor.shutdown()
         try {
             hidDevice?.unregisterApp()
         } catch (e: Exception) {
@@ -124,7 +127,8 @@ class BluetoothHidManager(private val context: Context) {
         val device = connectedDevice ?: return false
         val hid = hidDevice ?: return false
         val report = HidDescriptor.buildReport(tipDown, barrel, inRange, x, y, pressure, eraser, tiltX, tiltY)
-        return hid.sendReport(device, HidDescriptor.REPORT_ID_DIGITIZER, report)
+        reportExecutor.execute { hid.sendReport(device, HidDescriptor.REPORT_ID_DIGITIZER, report) }
+        return true
     }
 
     fun sendMouseReport(
@@ -138,14 +142,16 @@ class BluetoothHidManager(private val context: Context) {
         val device = connectedDevice ?: return false
         val hid = hidDevice ?: return false
         val report = HidDescriptor.buildMouseReport(left, right, middle, dx, dy, scroll)
-        return hid.sendReport(device, HidDescriptor.REPORT_ID_MOUSE, report)
+        reportExecutor.execute { hid.sendReport(device, HidDescriptor.REPORT_ID_MOUSE, report) }
+        return true
     }
 
     fun sendKeyboardReport(modifiers: Int, vararg keycodes: Int): Boolean {
         val device = connectedDevice ?: return false
         val hid = hidDevice ?: return false
         val report = HidDescriptor.buildKeyboardReport(modifiers, *keycodes)
-        return hid.sendReport(device, HidDescriptor.REPORT_ID_KEYBOARD, report)
+        reportExecutor.execute { hid.sendReport(device, HidDescriptor.REPORT_ID_KEYBOARD, report) }
+        return true
     }
 
     // ---- Profile listener ----
@@ -178,8 +184,16 @@ class BluetoothHidManager(private val context: Context) {
             HidDescriptor.DESCRIPTOR
         )
 
-        // QoS not strictly required; pass null for default
-        hid.registerApp(sdp, null, null, executor, hidCallback)
+        // QoS: request low latency for responsive pen input
+        val outQos = BluetoothHidDeviceAppQosSettings(
+            BluetoothHidDeviceAppQosSettings.SERVICE_GUARANTEED,
+            1500,    // tokenRate: ~125 reports/s × 11 bytes
+            11,      // tokenBucketSize: one report
+            1500,    // peakBandwidth
+            8000,    // latency: 8ms max
+            BluetoothHidDeviceAppQosSettings.MAX
+        )
+        hid.registerApp(sdp, null, outQos, executor, hidCallback)
     }
 
     // ---- HID callback ----
@@ -195,15 +209,24 @@ class BluetoothHidManager(private val context: Context) {
         }
 
         override fun onConnectionStateChanged(device: BluetoothDevice, state: Int) {
-            Log.d(TAG, "onConnectionStateChanged device=${device.name} state=$state")
+            Log.d(TAG, "onConnectionStateChanged device=${device.name} addr=${device.address} state=$state")
             when (state) {
                 BluetoothProfile.STATE_CONNECTED -> {
+                    val target = autoConnectAddress
+                    if (target != null && !device.address.equals(target, ignoreCase = true)) {
+                        // Wrong device connected (e.g., stale pairing from another host)
+                        Log.w(TAG, "Rejecting connection from non-target device ${device.name} (${device.address}), target=$target")
+                        try { hidDevice?.disconnect(device) } catch (_: Exception) {}
+                        return
+                    }
                     connectedDevice = device
                     listener?.onDeviceConnected(device)
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
-                    connectedDevice = null
-                    listener?.onDeviceDisconnected()
+                    if (connectedDevice?.address == device.address) {
+                        connectedDevice = null
+                        listener?.onDeviceDisconnected()
+                    }
                     // Auto-reconnect after a short delay
                     executor.execute {
                         try { Thread.sleep(500) } catch (_: Exception) {}

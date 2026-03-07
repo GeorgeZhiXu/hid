@@ -52,7 +52,31 @@
 **Root cause:** `BluetoothHidDevice.registerApp()` with `SUBCLASS2_DIGITIZER_TABLET` causes Android to create a local virtual digitizer device. When the real Wacom pen touches the screen, Android sees two active stylus devices and drops events from one.
 **Fix:** Changed subclass to `SUBCLASS1_NONE`. Android no longer creates a local digitizer device, so the real pen has exclusive access. The HID descriptor still describes a digitizer to the REMOTE host (Mac) — only the local Android-side classification changed.
 
+### Unwanted pairing popups from previously paired devices
+**Status:** Mitigated — partial fix
+**Symptoms:** After unpairing a MacBook Air from both sides, the tablet still receives pairing requests when the HID app is running. The MacBook Air shows "Connection Request from TabUltraCPro."
+**Root cause:** Android's BT stack retains device entries in `bt_config.conf` even after unpairing. When `registerApp()` makes the tablet connectable, the BT stack may page previously known HID hosts at the system level, outside app control.
+**Mitigation:** App intercepts `ACTION_PAIRING_REQUEST` and auto-cancels bonding for non-target devices. This suppresses the popup in most cases but can't prevent the underlying BT page from the OS.
+**Full fix:** Toggle BT off/on on both devices, or clear BT cache on the Mac (`sudo defaults delete /Library/Preferences/com.apple.Bluetooth`).
+
 ## Resolved
+
+### Input lag on Mac — pen and finger trackpad
+**Status:** Resolved in v1.1.3
+**Symptoms:** Visible lag when drawing with pen or moving cursor with finger on Mac.
+**Root cause:** Three compounding issues: (1) `BluetoothHidDevice.sendReport()` blocked the UI thread, stalling touch event processing when BT buffer backed up; (2) historical pen events (~240Hz from Wacom digitizer) each generated a separate BT report, flooding the link; (3) `invalidate()` on every touch event forced redundant full-view redraws.
+**Fix:** BT reports sent on dedicated background thread; historical events used for local drawing only; view redraws coalesced to vsync.
+
+### Two-finger tap requires double-tap for right-click
+**Status:** Resolved in v1.1.3
+**Symptoms:** Two-finger tap on trackpad rarely triggers right-click on first attempt, requires double-tap.
+**Root cause:** Two issues: (1) `ACTION_UP` distance check compared first finger's down position with last finger's up position — always ~300-400px apart, exceeding `TAP_SLOP`; (2) tiny finger movement during tap (~1px average) accumulated into scroll, setting `trackMoved = true`.
+**Fix:** Skip distance check for multi-finger taps; added `twoFingerDisplacement` threshold (15px) before marking as moved.
+
+### Non-target device hijacks HID session
+**Status:** Resolved in v1.1.3
+**Symptoms:** When a previously paired MacBook Air connects while tablet is paired to Mac mini, HID reports get sent to wrong device, input stops working.
+**Fix:** `onConnectionStateChanged` rejects connections from devices that don't match `autoConnectAddress`.
 
 ### Screenshot button disappearing after first capture
 **Cause:** `updateScreenshotBtn()` had a guard `if (!screenshotBtn.isEnabled) return` that prevented re-enabling.

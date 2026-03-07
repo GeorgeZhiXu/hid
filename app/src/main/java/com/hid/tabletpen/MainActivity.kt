@@ -6,7 +6,10 @@ import android.app.AlertDialog
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothClass
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.os.Build
@@ -50,6 +53,28 @@ class MainActivity : AppCompatActivity(),
     private lateinit var shortcutContainer: android.widget.LinearLayout
 
     private var hidRegistered = false
+
+    // Block pairing requests from non-target devices
+    private val pairingReceiver = object : BroadcastReceiver() {
+        @SuppressLint("MissingPermission")
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action != BluetoothDevice.ACTION_PAIRING_REQUEST) return
+            val device = intent.getParcelableExtra<BluetoothDevice>(BluetoothDevice.EXTRA_DEVICE) ?: return
+            val target = hidManager.connectedDeviceAddress ?: AppSettings.loadLastDevice(context)
+            if (target != null && !device.address.equals(target, ignoreCase = true)) {
+                android.util.Log.i("PairingBlock", "Rejecting pairing from non-target: ${device.name} (${device.address})")
+                try {
+                    device.setPairingConfirmation(false)
+                } catch (_: Exception) {}
+                try {
+                    // Cancel the bond process to dismiss the dialog
+                    val method = device.javaClass.getMethod("cancelBondProcess")
+                    method.invoke(device)
+                } catch (_: Exception) {}
+                abortBroadcast()
+            }
+        }
+    }
 
     // Auto-recapture: screenshot after pen lifts
     private var autoRecaptureRunnable: Runnable? = null
@@ -105,6 +130,12 @@ class MainActivity : AppCompatActivity(),
             }
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
+
+        // Register pairing blocker with max priority to intercept before system UI
+        val pairingFilter = IntentFilter(BluetoothDevice.ACTION_PAIRING_REQUEST).apply {
+            priority = IntentFilter.SYSTEM_HIGH_PRIORITY - 1
+        }
+        registerReceiver(pairingReceiver, pairingFilter)
 
         btScreenshot = BluetoothScreenshot(this)
         btScreenshot.listener = object : BluetoothScreenshot.Listener {
@@ -182,6 +213,7 @@ class MainActivity : AppCompatActivity(),
 
     override fun onDestroy() {
         super.onDestroy()
+        try { unregisterReceiver(pairingReceiver) } catch (_: Exception) {}
         stopDotAnimation()
         btScreenshot.stopServer()
         hidManager.stop()
@@ -217,7 +249,7 @@ class MainActivity : AppCompatActivity(),
         val isEraser = event.toolType == android.view.MotionEvent.TOOL_TYPE_ERASER
         val tiltX = (event.tiltX * HidDescriptor.TILT_MAX).toInt()
         val tiltY = (event.tiltY * HidDescriptor.TILT_MAX).toInt()
-        val sent = hidManager.sendDigitizerReport(
+        hidManager.sendDigitizerReport(
             tipDown = event.tipDown,
             barrel = event.barrel,
             inRange = event.inRange,
@@ -225,9 +257,6 @@ class MainActivity : AppCompatActivity(),
             eraser = isEraser,
             tiltX = tiltX, tiltY = tiltY
         )
-        if (event.tipDown) {
-            android.util.Log.d("HidReport", "tip=${event.tipDown} eraser=$isEraser x=$x y=$y p=$pressure sent=$sent")
-        }
 
         // Auto-recapture: schedule screenshot after pen lifts
         if (settings.autoRecapture) {
@@ -283,10 +312,6 @@ class MainActivity : AppCompatActivity(),
 
     private fun handleMouseEvent(event: DrawPadView.MouseEvent) {
         if (!hidManager.isConnected) return
-
-        if (event.leftButton || event.rightButton) {
-            android.util.Log.d("HidMouse", "left=${event.leftButton} right=${event.rightButton} scroll=${event.scroll}")
-        }
 
         if (event.horizontalScroll != 0f) {
             // Horizontal scroll: Shift + scroll wheel (macOS convention)
