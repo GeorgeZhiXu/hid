@@ -125,9 +125,12 @@ class BluetoothScreenshot(private val context: Context) {
         val (quality, maxDim) = PenMath.resolveQuality(preset, lastTransferMs, lastTransferBytes)
         val sb = StringBuilder(base)
         sb.append(" q=$quality max=$maxDim")
-        if (base == "stream" && focusRect == null) {
-            sb.append(" codec=h264")  // request H.264 for full-screen streaming
-        }
+        // H.264 encode is 18x smaller but Android decode-to-Bitmap needs work
+        // (YUV→ARGB conversion produces incorrect colors). Using JPEG push-model for now.
+        // TODO: enable when H.264 decode pipeline is fixed
+        // if (base == "stream" && focusRect == null) {
+        //     sb.append(" codec=h264")
+        // }
         focusRect?.let { r ->
             sb.append(" r=%.3f,%.3f,%.3f,%.3f".format(r.left, r.top, r.right, r.bottom))
         }
@@ -469,9 +472,15 @@ class BluetoothScreenshot(private val context: Context) {
             return
         }
         if (streaming.getAndSet(true)) return
-        // Close existing screenshot WiFi socket so the server can accept the stream connection
+        // Tell Mac to close the screenshot connection, then close our socket
+        // This allows the Mac's WiFi handler to return to accept() for the stream connection
+        try {
+            wifiSocket?.getOutputStream()?.write("close\n".toByteArray())
+            wifiSocket?.getOutputStream()?.flush()
+        } catch (_: Exception) {}
         try { wifiSocket?.close() } catch (_: Exception) {}
         wifiSocket = null
+        Thread.sleep(200)  // give Mac time to process close and return to accept
         // Open a FRESH TCP connection for streaming (separate from screenshot socket)
         // This avoids socket state confusion when switching from request-response to push mode
         Thread({
@@ -541,7 +550,6 @@ class BluetoothScreenshot(private val context: Context) {
         }
         Log.i(TAG, "H.264: SPS(${sps.size}B) PPS(${pps.size}B) found")
 
-        // Parse width/height from SPS (simplified — use defaults if parsing fails)
         val format = MediaFormat.createVideoFormat("video/avc", 1920, 1080).apply {
             setByteBuffer("csd-0", ByteBuffer.wrap(byteArrayOf(0, 0, 0, 1) + sps))
             setByteBuffer("csd-1", ByteBuffer.wrap(byteArrayOf(0, 0, 0, 1) + pps))
@@ -549,12 +557,14 @@ class BluetoothScreenshot(private val context: Context) {
                 setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
             }
             setInteger(MediaFormat.KEY_PRIORITY, 0)
+            // Request COLOR_FormatYUV420Flexible for ByteBuffer output
+            setInteger(MediaFormat.KEY_COLOR_FORMAT,
+                android.media.MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible)
         }
 
         val codec = MediaCodec.createDecoderByType("video/avc")
-        // Use ImageReader for Bitmap output
-        h264ImageReader = ImageReader.newInstance(1920, 1080, android.graphics.PixelFormat.RGBA_8888, 3)
-        codec.configure(format, h264ImageReader!!.surface, null, 0)
+        // Configure without Surface — use ByteBuffer output for YUV → Bitmap conversion
+        codec.configure(format, null, null, 0)
         codec.start()
         h264BufferInfo = MediaCodec.BufferInfo()
         Log.i(TAG, "H.264 decoder started")
@@ -583,30 +593,32 @@ class BluetoothScreenshot(private val context: Context) {
         while (true) {
             val outputIndex = codec.dequeueOutputBuffer(bufferInfo, 0)
             if (outputIndex >= 0) {
-                // Release to ImageReader's surface — triggers onImageAvailable
-                codec.releaseOutputBuffer(outputIndex, true)
-                // Read from ImageReader
-                val image = h264ImageReader?.acquireLatestImage()
-                if (image != null) {
+                val outputBuffer = codec.getOutputBuffer(outputIndex)
+                if (outputBuffer != null && bufferInfo.size > 0) {
+                    // Get output format for dimensions
+                    val fmt = codec.outputFormat
+                    val width = fmt.getInteger(MediaFormat.KEY_WIDTH)
+                    val height = fmt.getInteger(MediaFormat.KEY_HEIGHT)
+                    val colorFormat = fmt.getInteger(MediaFormat.KEY_COLOR_FORMAT)
+
+                    // Convert YUV to Bitmap using Android's YuvImage
+                    val yuvBytes = ByteArray(bufferInfo.size)
+                    outputBuffer.position(bufferInfo.offset)
+                    outputBuffer.get(yuvBytes)
+
                     try {
-                        val planes = image.planes
-                        val buffer = planes[0].buffer
-                        val pixelStride = planes[0].pixelStride
-                        val rowStride = planes[0].rowStride
-                        val rowPadding = rowStride - pixelStride * image.width
-                        val bmp = Bitmap.createBitmap(
-                            image.width + rowPadding / pixelStride,
-                            image.height, Bitmap.Config.ARGB_8888
+                        val yuvImage = android.graphics.YuvImage(
+                            yuvBytes, android.graphics.ImageFormat.NV21, width, height, null
                         )
-                        bmp.copyPixelsFromBuffer(buffer)
-                        // Crop if there was padding
-                        bitmap = if (rowPadding > 0) {
-                            Bitmap.createBitmap(bmp, 0, 0, image.width, image.height)
-                        } else bmp
-                    } finally {
-                        image.close()
+                        val out = java.io.ByteArrayOutputStream()
+                        yuvImage.compressToJpeg(android.graphics.Rect(0, 0, width, height), 90, out)
+                        val jpegBytes = out.toByteArray()
+                        bitmap = BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "H.264 YUV→Bitmap failed: ${e.message}")
                     }
                 }
+                codec.releaseOutputBuffer(outputIndex, false)
             } else if (outputIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
                 Log.i(TAG, "H.264 output format: ${codec.outputFormat}")
             } else {

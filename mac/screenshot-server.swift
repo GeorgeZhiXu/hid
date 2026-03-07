@@ -122,20 +122,22 @@ class H264Encoder {
 
     /// Called by VTCompressionSession output handler — extracts Annex B NAL data
     private func handleEncodedFrame(_ sampleBuffer: CMSampleBuffer) {
+        autoreleasepool {
+            handleEncodedFrameInner(sampleBuffer)
+        }
+    }
+
+    private func handleEncodedFrameInner(_ sampleBuffer: CMSampleBuffer) {
         var result = Data()
 
         // Check if keyframe — extract SPS/PPS from format description
         let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false)
-        var isKeyframe = false
+        var isKeyframe = true  // assume keyframe unless NotSync is explicitly true
         if let attachments = attachments, CFArrayGetCount(attachments) > 0 {
             let dict = unsafeBitCast(CFArrayGetValueAtIndex(attachments, 0), to: CFDictionary.self)
-            var notSync: CFBoolean = kCFBooleanFalse
-            if CFDictionaryGetValueIfPresent(dict, Unmanaged.passUnretained(kCMSampleAttachmentKey_NotSync).toOpaque(), nil) {
-                // If NotSync is absent or false, it's a keyframe
-                isKeyframe = true
-            }
-            if !CFDictionaryContainsKey(dict, Unmanaged.passUnretained(kCMSampleAttachmentKey_NotSync).toOpaque()) {
-                isKeyframe = true
+            if CFDictionaryContainsKey(dict, Unmanaged.passUnretained(kCMSampleAttachmentKey_NotSync).toOpaque()) {
+                // NotSync key exists — if true, this is NOT a keyframe
+                isKeyframe = false
             }
         }
 
@@ -182,12 +184,18 @@ class H264Encoder {
                 nalUnitHeaderLengthOut: &nalLengthSize)
         }
 
-        while offset < totalLength {
+        while offset + Int(nalLengthSize) <= totalLength {
             // Read NAL unit length (big-endian, usually 4 bytes)
             var nalLength: UInt32 = 0
             memcpy(&nalLength, ptr.advanced(by: offset), Int(nalLengthSize))
             nalLength = UInt32(bigEndian: nalLength)
             offset += Int(nalLengthSize)
+
+            // Bounds check: NAL data must fit within remaining buffer
+            guard Int(nalLength) > 0 && offset + Int(nalLength) <= totalLength else {
+                print("H264: NAL length out of bounds (\(nalLength) at offset \(offset), total \(totalLength))")
+                break
+            }
 
             // Write Annex B start code + NAL data
             result.append(contentsOf: [0, 0, 0, 1])
@@ -953,7 +961,7 @@ func handleWifiClient(fd: Int32) {
                     streamLoop(fd: fd, params: params)  // legacy fallback
                 }
                 print("WiFi: streaming stopped")
-            } else if cmd == "stop" {
+            } else if cmd == "stop" || cmd == "close" {
                 break
             }
         } else {
