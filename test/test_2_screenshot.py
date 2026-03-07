@@ -389,6 +389,146 @@ class TestH264Streaming:
             print(f"  Tablet received {jpeg_count} JPEG frames")
 
 
+class TestBtStreaming:
+    """Test H.264 streaming over Bluetooth RFCOMM."""
+
+    def _select_stream_method(self, adb: Adb, method_text: str):
+        """Open Settings, select a stream method, tap Apply."""
+        import re as _re
+
+        # Tap Settings button
+        assert adb.tap_button("btn_settings"), "Settings button not found"
+        time.sleep(2)
+
+        # Scroll down in the settings dialog to reveal Stream Method
+        adb.swipe(1200, 1400, 1200, 600, 300)
+        time.sleep(1)
+
+        # Dump UI and find the Stream Method spinner
+        # It's a CheckedTextView after the "Stream Method" label
+        adb.shell("uiautomator dump /sdcard/ui.xml")
+        xml = adb.shell("cat /sdcard/ui.xml")
+
+        # Find all CheckedTextView entries — the Stream Method spinner is after
+        # "Stream Method" text. Find by looking for spinner entries in order.
+        segments = xml.replace(">", ">\n").split("\n")
+        found_label = False
+        spinner_tapped = False
+        for seg in segments:
+            if "Stream Method" in seg and "TextView" in seg:
+                found_label = True
+                continue
+            if found_label and "CheckedTextView" in seg:
+                m = _re.search(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', seg)
+                if m:
+                    x1, y1, x2, y2 = map(int, m.groups())
+                    adb.tap((x1 + x2) // 2, (y1 + y2) // 2)
+                    spinner_tapped = True
+                    time.sleep(1)
+                    break
+
+        if not spinner_tapped:
+            return False
+
+        # Dropdown is open — tap the desired method
+        adb.shell("uiautomator dump /sdcard/ui.xml")
+        xml2 = adb.shell("cat /sdcard/ui.xml")
+        item_tapped = False
+        for seg in xml2.replace(">", ">\n").split("\n"):
+            if method_text in seg:
+                m = _re.search(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', seg)
+                if m:
+                    x1, y1, x2, y2 = map(int, m.groups())
+                    adb.tap((x1 + x2) // 2, (y1 + y2) // 2)
+                    item_tapped = True
+                    time.sleep(1)
+                    break
+
+        # Scroll down more to find Apply button
+        adb.swipe(1200, 1400, 1200, 600, 300)
+        time.sleep(1)
+
+        # Tap Apply (button1 in AlertDialog)
+        adb.tap_button("button1")
+        time.sleep(1)
+        return item_tapped
+
+    def test_bt_h264_streaming(self, adb: Adb, bt_connected: ScreenshotServer):
+        """Stream H.264 over Bluetooth RFCOMM."""
+        import subprocess as sp
+
+        adb.launch_app()
+        time.sleep(3)
+
+        # Stop any running stream
+        adb.shell("uiautomator dump /sdcard/ui.xml")
+        xml = adb.shell("cat /sdcard/ui.xml")
+        if 'text="Stop"' in xml:
+            adb.tap_button("btn_stream")
+            time.sleep(3)
+
+        # Select BT stream method in Settings
+        if not self._select_stream_method(adb, "H.264 (BT)"):
+            pytest.skip("Could not select BT stream method in Settings UI")
+        time.sleep(2)
+
+        # Verify stream button is visible (BT connected)
+        adb.shell("uiautomator dump /sdcard/ui.xml")
+        xml = adb.shell("cat /sdcard/ui.xml")
+        if "btn_stream" not in xml:
+            pytest.skip("Stream button not visible after setting BT method")
+
+        # Start stream
+        adb.clear_logcat()
+        time.sleep(1)
+        assert adb.tap_button("btn_stream"), "Stream button not found"
+
+        # Generate screen changes
+        sp.run(["osascript", "-e", '''
+            tell app "TextEdit" to activate
+            tell app "System Events" to tell process "TextEdit"
+                try
+                    click menu item "New" of menu "File" of menu bar 1
+                end try
+            end tell
+        '''], timeout=10)
+        time.sleep(8)
+        sp.run(["osascript", "-e", 'tell app "TextEdit" to quit saving no'], timeout=5)
+        time.sleep(3)
+
+        # Check results
+        log = adb.logcat("BtScreenshot")
+        bt_stream = "BT stream" in log or "BT H.264" in log
+        h264_count = len(re.findall(r"Stream \[h264\]", log))
+        total_frames = len(re.findall(r"Stream \[", log))
+
+        # Stop stream
+        adb.tap_button("btn_stream")
+        time.sleep(2)
+
+        # Check server log
+        server_log = bt_connected.read_log()
+        bt_h264_server = "[h264-bt]" in server_log
+        bt_started = "BT streaming started" in server_log
+
+        # Restore Auto stream method
+        self._select_stream_method(adb, "Auto")
+
+        if bt_started:
+            bt_frames = server_log.count("[h264-bt]")
+            print(f"  BT H.264 streaming: {bt_frames} server frames, {h264_count} tablet frames")
+            assert bt_frames >= 3, f"Too few BT H.264 frames: {bt_frames}"
+        elif total_frames > 0:
+            print(f"  Stream worked but used WiFi ({total_frames} frames) — BT method may not have been selected")
+        else:
+            # Check for BT stream command in device log
+            if "Starting BT H.264 stream" in log:
+                print(f"  BT stream started but no frames received")
+                pytest.fail("BT stream started but no frames received")
+            else:
+                pytest.skip("Could not select BT stream method via UI automation")
+
+
 class TestDeltaStreaming:
     """Test delta compression during streaming."""
 

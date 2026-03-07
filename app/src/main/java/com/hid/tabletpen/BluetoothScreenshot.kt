@@ -228,14 +228,41 @@ class BluetoothScreenshot(private val context: Context) {
         val readerThread = Thread({
             try {
                 val input = btSocket.inputStream
-                // Continuous read loop: handles wifi: info, app: detection, and future messages
+                // Continuous read loop: handles wifi: info, app: detection, and BT streaming
                 while (true) {
+                    val b = input.read()
+                    if (b == -1) return@Thread
+
+                    // Check if this is a binary frame type (H.264 = 0x03, JPEG = 0x00/0x02)
+                    // Text commands are printable ASCII (>= 0x20). Frame types are < 0x10.
+                    if (b < 0x10 && btStreamRequested) {
+                        // Binary frame mode: Mac is sending streaming frames
+                        btStreamRequested = false
+                        Log.i(TAG, "BT reader: entering stream mode (first type=0x${"%02x".format(b)})")
+                        try {
+                            // Push back the type byte by wrapping input
+                            val pushback = java.io.PushbackInputStream(input, 1)
+                            pushback.unread(b)
+                            streamFrameLoop(pushback)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "BT stream ended: ${e.message}")
+                        } finally {
+                            streaming.set(false)
+                            btStreaming = false
+                            releaseH264Decoder()
+                        }
+                        Log.i(TAG, "BT reader: resuming text mode")
+                        continue
+                    }
+
+                    // Text command mode: read until newline
                     val sb = StringBuilder()
+                    sb.append(b.toChar())
                     while (true) {
-                        val b = input.read()
-                        if (b == -1) return@Thread  // connection closed
-                        if (b == '\n'.code) break
-                        sb.append(b.toChar())
+                        val c = input.read()
+                        if (c == -1) return@Thread
+                        if (c == '\n'.code) break
+                        sb.append(c.toChar())
                     }
                     val line = sb.toString().trim()
                     if (line.isEmpty()) continue
@@ -537,28 +564,25 @@ class BluetoothScreenshot(private val context: Context) {
     // Stream socket is separate from wifiSocket (screenshot socket)
     @Volatile private var streamSocket: java.net.Socket? = null
     @Volatile private var btStreaming = false
+    @Volatile private var btStreamRequested = false  // signals BT reader to enter stream mode
 
     private fun startBtStream(btSocket: BluetoothSocket) {
         if (streaming.getAndSet(true)) return
         btStreaming = true
-        Thread({
-            try {
-                Log.i(TAG, "Starting BT H.264 stream...")
-                val cmd = buildCommand("stream")
-                synchronized(btSocket) {
-                    btSocket.outputStream.write(cmd.toByteArray())
-                    btSocket.outputStream.flush()
-                }
-                Log.i(TAG, "BT stream command sent: ${cmd.trim()}")
-                // Read frames from BT input stream using shared streamFrameLoop
-                streamFrameLoop(btSocket.inputStream)
-            } catch (e: Exception) {
-                Log.e(TAG, "BT stream error: ${e.message}")
-                streaming.set(false)
-                btStreaming = false
-                mainHandler.post { listener?.onScreenshotError("BT stream failed: ${e.message}") }
-            }
-        }, "Stream-BT").start()
+        btStreamRequested = true
+        // Send stream command — this goes to Mac which starts sending H.264 frames
+        // The BT reader thread will see btStreamRequested and enter streamFrameLoop
+        val cmd = buildCommand("stream")
+        try {
+            btSocket.outputStream.write(cmd.toByteArray())
+            btSocket.outputStream.flush()
+            Log.i(TAG, "BT stream command sent: ${cmd.trim()}")
+        } catch (e: Exception) {
+            Log.e(TAG, "BT stream write failed: ${e.message}")
+            streaming.set(false)
+            btStreaming = false
+            btStreamRequested = false
+        }
     }
 
     // ---- H.264 decoder state ----
