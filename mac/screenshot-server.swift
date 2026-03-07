@@ -1439,7 +1439,10 @@ class ScreenshotServer: NSObject, IOBluetoothRFCOMMChannelDelegate {
     private func writeTypedFrameBT(channel: IOBluetoothRFCOMMChannel, type: UInt8, data: Data) -> Bool {
         var t = type
         let typeOk = channel.writeSync(&t, length: 1)
-        if typeOk != kIOReturnSuccess { return false }
+        if typeOk != kIOReturnSuccess {
+            print("BT write type failed: \(typeOk)")
+            return false
+        }
 
         var size = UInt32(data.count).bigEndian
         let sizeOk = withUnsafeMutablePointer(to: &size) { p in channel.writeSync(p, length: 4) }
@@ -1464,9 +1467,18 @@ class ScreenshotServer: NSObject, IOBluetoothRFCOMMChannelDelegate {
     private func streamBT(channel: IOBluetoothRFCOMMChannel, params: CaptureParams) {
         print("BT streaming started (H.264)")
 
-        // Create H.264 encoder with lower bitrate for BT bandwidth
-        let encoder = H264Encoder(width: 1280, height: 720)
-        // Override bitrate for BT: 400kbps (vs 2Mbps WiFi)
+        // Create H.264 encoder matching SCK capture resolution
+        var encWidth = 1920
+        var encHeight = 1080
+        #if canImport(ScreenCaptureKit)
+        if #available(macOS 12.3, *), let capture = sckCapture as? SCKCapture,
+           let buf = capture.grabFrame() {
+            encWidth = CVPixelBufferGetWidth(buf)
+            encHeight = CVPixelBufferGetHeight(buf)
+        }
+        #endif
+        let encoder = H264Encoder(width: encWidth, height: encHeight)
+        // Lower bitrate for BT: 400kbps (vs 2Mbps WiFi)
         guard encoder.start(bitrate: 400_000) else {
             print("BT stream: H.264 encoder failed to start")
             return
