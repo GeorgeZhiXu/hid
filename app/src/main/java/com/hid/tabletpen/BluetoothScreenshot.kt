@@ -139,6 +139,9 @@ class BluetoothScreenshot(private val context: Context) {
                 StreamMethod.SCK_H264 -> {
                     if (focusRect == null) sb.append(" codec=h264")
                 }
+                StreamMethod.SCK_H264_BT -> {
+                    sb.append(" codec=h264")  // BT always uses H.264
+                }
                 StreamMethod.SCREENCAPTURE -> sb.append(" codec=legacy")
             }
         }
@@ -475,11 +478,31 @@ class BluetoothScreenshot(private val context: Context) {
 
     // MARK: - Streaming
 
+    /** Whether BT RFCOMM is connected (for stream button visibility) */
+    val isBtConnected: Boolean get() = connectedSocket.get()?.isConnected == true
+
     fun startStream() {
+        // Force BT path if BT streaming method is selected
+        if (streamMethod == StreamMethod.SCK_H264_BT) {
+            val bt = connectedSocket.get()
+            if (bt != null && bt.isConnected) {
+                startBtStream(bt)
+                return
+            }
+            mainHandler.post { listener?.onScreenshotError("BT not connected") }
+            return
+        }
+
         val host = wifiHost
         val port = wifiPort
         if (host == null || port <= 0) {
-            mainHandler.post { listener?.onScreenshotError("WiFi not available") }
+            // No WiFi — try BT streaming with H.264 (Auto fallback)
+            val bt = connectedSocket.get()
+            if (bt != null && bt.isConnected) {
+                startBtStream(bt)
+                return
+            }
+            mainHandler.post { listener?.onScreenshotError("No connection available") }
             return
         }
         if (streaming.getAndSet(true)) return
@@ -513,6 +536,30 @@ class BluetoothScreenshot(private val context: Context) {
 
     // Stream socket is separate from wifiSocket (screenshot socket)
     @Volatile private var streamSocket: java.net.Socket? = null
+    @Volatile private var btStreaming = false
+
+    private fun startBtStream(btSocket: BluetoothSocket) {
+        if (streaming.getAndSet(true)) return
+        btStreaming = true
+        Thread({
+            try {
+                Log.i(TAG, "Starting BT H.264 stream...")
+                val cmd = buildCommand("stream")
+                synchronized(btSocket) {
+                    btSocket.outputStream.write(cmd.toByteArray())
+                    btSocket.outputStream.flush()
+                }
+                Log.i(TAG, "BT stream command sent: ${cmd.trim()}")
+                // Read frames from BT input stream using shared streamFrameLoop
+                streamFrameLoop(btSocket.inputStream)
+            } catch (e: Exception) {
+                Log.e(TAG, "BT stream error: ${e.message}")
+                streaming.set(false)
+                btStreaming = false
+                mainHandler.post { listener?.onScreenshotError("BT stream failed: ${e.message}") }
+            }
+        }, "Stream-BT").start()
+    }
 
     // ---- H.264 decoder state ----
     private var h264Decoder: MediaCodec? = null
@@ -747,12 +794,27 @@ class BluetoothScreenshot(private val context: Context) {
 
     fun stopStream() {
         if (!streaming.getAndSet(false)) return
-        try {
-            streamSocket?.getOutputStream()?.write("stop\n".toByteArray())
-            streamSocket?.getOutputStream()?.flush()
-        } catch (_: Exception) {}
-        try { streamSocket?.close() } catch (_: Exception) {}
-        streamSocket = null
+        if (btStreaming) {
+            // Send stop over BT RFCOMM
+            btStreaming = false
+            try {
+                val bt = connectedSocket.get()
+                if (bt != null && bt.isConnected) {
+                    synchronized(bt) {
+                        bt.outputStream.write("stop\n".toByteArray())
+                        bt.outputStream.flush()
+                    }
+                }
+            } catch (_: Exception) {}
+        } else {
+            // WiFi stream
+            try {
+                streamSocket?.getOutputStream()?.write("stop\n".toByteArray())
+                streamSocket?.getOutputStream()?.flush()
+            } catch (_: Exception) {}
+            try { streamSocket?.close() } catch (_: Exception) {}
+            streamSocket = null
+        }
     }
 
     private fun streamLoop(socket: java.net.Socket) {
@@ -762,9 +824,16 @@ class BluetoothScreenshot(private val context: Context) {
             socket.getOutputStream().write(cmd.toByteArray())
             socket.getOutputStream().flush()
 
-            val input = socket.getInputStream()
-            var frameCount = 0
-            val startTime = System.currentTimeMillis()
+            streamFrameLoop(socket.getInputStream())
+        } finally {
+            streamSocket = null
+        }
+    }
+
+    private fun streamFrameLoop(input: InputStream) {
+        var frameCount = 0
+        val startTime = System.currentTimeMillis()
+        try {
 
             while (streaming.get()) {
                 val t0 = System.currentTimeMillis()

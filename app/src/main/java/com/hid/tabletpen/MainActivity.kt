@@ -153,8 +153,9 @@ class MainActivity : AppCompatActivity(),
             }
             @SuppressLint("SetTextI18n")
             override fun onWifiStateChanged(connected: Boolean) {
-                streamBtn.visibility = if (connected) View.VISIBLE else View.GONE
-                if (!connected && btScreenshot.isStreaming) {
+                // Show Stream button when WiFi OR BT is connected (BT H.264 streaming)
+                streamBtn.visibility = if (connected || btScreenshot.isBtConnected) View.VISIBLE else View.GONE
+                if (!connected && !btScreenshot.isBtConnected && btScreenshot.isStreaming) {
                     streamBtn.text = "Stream"
                 }
             }
@@ -894,6 +895,11 @@ class MainActivity : AppCompatActivity(),
             discoverableBtn.isEnabled = true
             discoverableBtn.visibility = View.VISIBLE
             stopDotAnimation()
+        }
+
+        // Stream button — visible when WiFi or BT connected
+        if (btScreenshot.isWifiConnected || btScreenshot.isBtConnected) {
+            streamBtn.visibility = View.VISIBLE
         }
 
         // Screenshot button — shows Mac connection state

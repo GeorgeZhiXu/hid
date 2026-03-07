@@ -41,7 +41,7 @@ class H264Encoder {
         self.height = height
     }
 
-    func start() -> Bool {
+    func start(bitrate: Int = 2_000_000) -> Bool {
         var session: VTCompressionSession?
         let selfPtr = Unmanaged.passUnretained(self).toOpaque()
         let status = VTCompressionSessionCreate(
@@ -74,7 +74,7 @@ class H264Encoder {
         VTSessionSetProperty(sess, key: kVTCompressionPropertyKey_AllowFrameReordering,
                              value: kCFBooleanFalse)  // No B-frames → lower latency
         VTSessionSetProperty(sess, key: kVTCompressionPropertyKey_AverageBitRate,
-                             value: 2_000_000 as CFNumber)  // 2 Mbps
+                             value: bitrate as CFNumber)
         VTSessionSetProperty(sess, key: kVTCompressionPropertyKey_MaxKeyFrameInterval,
                              value: 60 as CFNumber)  // Keyframe every 60 frames (~2s)
         VTSessionSetProperty(sess, key: kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration,
@@ -1336,6 +1336,10 @@ class ScreenshotServer: NSObject, IOBluetoothRFCOMMChannelDelegate {
         let (action, btParams) = parseCommand(cmd)
         if action == "screenshot" {
             DispatchQueue.global().async { self.sendScreenshotBT(channel: ch, params: btParams) }
+        } else if action == "stream" {
+            DispatchQueue.global().async { self.streamBT(channel: ch, params: btParams) }
+        } else if action == "stop" {
+            stopBtStream()
         } else if action.hasPrefix("wifiserver") {
             // Tablet is offering a reverse WiFi server — connect outbound
             let parts = cmd.replacingOccurrences(of: "wifiserver:", with: "").split(separator: ":")
@@ -1374,6 +1378,7 @@ class ScreenshotServer: NSObject, IOBluetoothRFCOMMChannelDelegate {
 
     func rfcommChannelClosed(_ ch: IOBluetoothRFCOMMChannel!) {
         print("BT disconnected from \(tablet?.name ?? "?")")
+        stopBtStream()
         stopAppMonitor()
         channel = nil
         tablet = nil
@@ -1428,6 +1433,103 @@ class ScreenshotServer: NSObject, IOBluetoothRFCOMMChannelDelegate {
         }
         let totalMs = Int((CFAbsoluteTimeGetCurrent() - t0) * 1000)
         print("BT screenshot: \(frame.data.count/1024)KB total:\(totalMs)ms")
+    }
+
+    /// Write a typed frame (type byte + size + data) over RFCOMM
+    private func writeTypedFrameBT(channel: IOBluetoothRFCOMMChannel, type: UInt8, data: Data) -> Bool {
+        var t = type
+        let typeOk = channel.writeSync(&t, length: 1)
+        if typeOk != kIOReturnSuccess { return false }
+
+        var size = UInt32(data.count).bigEndian
+        let sizeOk = withUnsafeMutablePointer(to: &size) { p in channel.writeSync(p, length: 4) }
+        if sizeOk != kIOReturnSuccess { return false }
+
+        let mtu = max(Int(channel.getMTU()), 672)
+        var off = 0
+        while off < data.count {
+            let n = min(mtu, data.count - off)
+            let writeOk = data.withUnsafeBytes { buf in
+                channel.writeSync(
+                    UnsafeMutableRawPointer(mutating: buf.baseAddress!.advanced(by: off)),
+                    length: UInt16(n))
+            }
+            if writeOk != kIOReturnSuccess { return false }
+            off += n
+        }
+        return true
+    }
+
+    /// Stream H.264 frames over Bluetooth RFCOMM
+    private func streamBT(channel: IOBluetoothRFCOMMChannel, params: CaptureParams) {
+        print("BT streaming started (H.264)")
+
+        // Create H.264 encoder with lower bitrate for BT bandwidth
+        let encoder = H264Encoder(width: 1280, height: 720)
+        // Override bitrate for BT: 400kbps (vs 2Mbps WiFi)
+        guard encoder.start(bitrate: 400_000) else {
+            print("BT stream: H.264 encoder failed to start")
+            return
+        }
+
+        var frameCount = 0
+        let startTime = CFAbsoluteTimeGetCurrent()
+        btStreaming = true
+
+        while btStreaming {
+            let t0 = CFAbsoluteTimeGetCurrent()
+
+            // Capture screen using SCK or legacy
+            guard let frame = captureScreen(quality: params.quality, maxDim: 1280, region: params.region) else {
+                usleep(50_000)  // 50ms pause on capture failure
+                continue
+            }
+
+            // For BT streaming, we need to encode via H.264 but we have JPEG data from captureScreen.
+            // Instead, use SCK's grabFrame for the pixel buffer if available.
+            #if canImport(ScreenCaptureKit)
+            if #available(macOS 12.3, *), let capture = sckCapture as? SCKCapture,
+               let pixelBuffer = capture.grabFrame() {
+                let forceKey = frameCount == 0
+                if let nalData = encoder.encode(pixelBuffer: pixelBuffer, forceKeyframe: forceKey) {
+                    let t1 = CFAbsoluteTimeGetCurrent()
+                    if !writeTypedFrameBT(channel: channel, type: 0x03, data: nalData) {
+                        print("BT stream: write failed")
+                        break
+                    }
+                    frameCount += 1
+                    let elapsed = CFAbsoluteTimeGetCurrent() - startTime
+                    let fps = elapsed > 0 ? Double(frameCount) / elapsed : 0
+                    let encMs = Int((t1 - t0) * 1000)
+                    print("  [h264-bt] \(nalData.count/1024)KB encode:\(encMs)ms fps:\(String(format: "%.1f", fps))")
+
+                    // Throttle to ~15 FPS max to avoid saturating BT
+                    let frameMs = Int((CFAbsoluteTimeGetCurrent() - t0) * 1000)
+                    if frameMs < 66 { usleep(UInt32((66 - frameMs) * 1000)) }
+                    continue
+                }
+            }
+            #endif
+
+            // Fallback: send JPEG frame over BT (no H.264)
+            if !writeTypedFrameBT(channel: channel, type: 0x00, data: frame.data) {
+                print("BT stream: write failed (JPEG fallback)")
+                break
+            }
+            frameCount += 1
+            let frameMs = Int((CFAbsoluteTimeGetCurrent() - t0) * 1000)
+            if frameMs < 200 { usleep(UInt32((200 - frameMs) * 1000)) }
+        }
+
+        encoder.stop()
+        btStreaming = false
+        print("BT streaming stopped (\(frameCount) frames)")
+    }
+
+    var btStreaming = false
+
+    func stopBtStream() {
+        btStreaming = false
     }
 }
 

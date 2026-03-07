@@ -101,6 +101,8 @@ enum class StreamMethod(val label: String, val description: String) {
         "ScreenCaptureKit push-model, JPEG encoding. 25-29 FPS, <100ms latency, ~10 MB/s. Best for fast WiFi."),
     SCK_H264("SCK + H.264 (WiFi)",
         "ScreenCaptureKit push-model, H.264 hardware encoding. ~15 FPS, ~1s latency, 30x less bandwidth. Best for slow WiFi."),
+    SCK_H264_BT("SCK + H.264 (BT)",
+        "H.264 streaming over Bluetooth. ~5-10 FPS. Works without WiFi — only needs BT pairing."),
     SCREENCAPTURE("screencapture (WiFi)",
         "Legacy screencapture subprocess over WiFi. ~6 FPS. Fallback if SCK has issues on your Mac.");
 
