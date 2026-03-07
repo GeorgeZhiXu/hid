@@ -40,6 +40,12 @@
 **Symptoms:** WiFi Mac-as-server fails because CrowdStrike's `pf` rules block incoming TCP on port 9877.
 **Resolution:** Bidirectional WiFi — if Mac-as-server fails, tablet starts its own server and Mac connects outbound (outbound is never blocked).
 
+### Slow pen input on certain Macs (not an app issue)
+**Status:** Not a bug — Mac hardware/OS issue
+**Symptoms:** Pen drawing feels slow/laggy, even with hardware Wacom/Huion digitizer connected directly to Mac.
+**Root cause:** Some Mac minis have system-level input processing overhead that affects ALL pen input, not just Bluetooth HID. Confirmed by testing with a physical Huion digitizer on the same Mac — equally slow.
+**Workaround:** Test on a different Mac, or check macOS accessibility features, display scaling, or background processes.
+
 ### Android InputDispatcher dropping pen events — "stylus device already active"
 **Status:** Resolved
 **Symptoms:** Pen input laggy, curves become angles, pressure=0. Android system log: "Dropping event because a pointer for a stylus device is already active"
