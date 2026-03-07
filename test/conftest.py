@@ -83,7 +83,12 @@ class Adb:
         args = ["logcat", "-d"]
         if tag:
             args += ["-s", tag]
-        return self.run(*args, timeout=10)
+        result = subprocess.run(
+            [ADB, *args],
+            capture_output=True, timeout=10
+        )
+        # Decode with errors='replace' to handle binary data in logs
+        return result.stdout.decode("utf-8", errors="replace").strip()
 
     def is_app_running(self) -> bool:
         out = self.shell("dumpsys activity activities | grep -i tabletpen | head -1")

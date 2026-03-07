@@ -32,6 +32,10 @@ Follow these 5 phases for every task:
 - Read existing code before modifying
 - Keep changes minimal — don't refactor unrelated code
 - Extract pure functions to `PenMath.kt` for testability
+- **Add/update tests for every change** — don't wait for the user to ask:
+  - Add E2E tests for new features (pytest in `test/`)
+  - Add instrumented tests for gesture/UI changes
+  - Add unit tests for logic changes
 - **Update documentation** for every user-facing change:
   - `README.md` — user-facing features, settings, connection flow
   - `CHANGELOG.md` — add entry under current version
@@ -39,22 +43,24 @@ Follow these 5 phases for every task:
   - `ROADMAP.md` — mark implemented items, add new ideas that emerge
 
 ### Phase 4: Testing
-- Run unit tests: `./gradlew test`
-- Run instrumented tests: `./gradlew connectedDebugAndroidTest`
-- Run E2E tests: `python3 -m pytest test/ -v` (requires tablet USB + BT paired with Mac)
-- Run specific E2E module: `python3 -m pytest test/test_hid_input.py -v`
-- Legacy E2E shell script (deprecated): `./test/e2e.sh`
-- For Mac changes: rebuild with `cd mac && ./build.sh`
-- Verify the specific fix manually if E2E doesn't cover it
+- **Run ALL tests before asking user to test manually:**
+  1. Unit tests: `./gradlew test`
+  2. Instrumented tests: `./gradlew connectedDebugAndroidTest` (if tablet connected)
+  3. E2E tests: `python3 -m pytest test/ -v` (if BT paired with Mac)
+  4. For Mac changes: rebuild with `cd mac && ./build.sh`
+- **Never claim code works without running tests and seeing results**
+- **Use the connected device for automated testing** — don't ask user to test manually when adb/E2E tests can verify
+- **Install APK on device after building** — verify via adb install, not just compilation
+- When tests fail, investigate logs (logcat, server output) before asking user
 
 ### Phase 5: Commit, Push & Publish
+- Bump `versionCode` and `versionName` in `app/build.gradle.kts`
 - Verify all docs are updated (README, CHANGELOG, ISSUES, ROADMAP)
 - Commit with descriptive message explaining WHY, not just WHAT
 - Push to main branch
 - Update GitHub release if APK or Mac binary changed:
   ```bash
-  gh release delete v0.X.0 --yes
-  gh release create v0.X.0 app/build/outputs/apk/debug/app-debug.apk mac/screenshot-server#screenshot-server-macos-arm64
+  gh release create vX.Y.Z app/build/outputs/apk/debug/app-debug.apk mac/screenshot-server#screenshot-server-macos-arm64
   ```
 
 ## Project Documentation

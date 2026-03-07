@@ -27,6 +27,178 @@ let useScreenCaptureKit: Bool = {
 
 var sckCapture: AnyObject? = nil  // type-erased SCKCapture
 
+// MARK: - H.264 Hardware Encoder (VideoToolbox)
+
+class H264Encoder {
+    private var session: VTCompressionSession?
+    private var pendingData: Data?
+    private var frameIndex: Int64 = 0
+    private let width: Int
+    private let height: Int
+
+    init(width: Int, height: Int) {
+        self.width = width
+        self.height = height
+    }
+
+    func start() -> Bool {
+        var session: VTCompressionSession?
+        let selfPtr = Unmanaged.passUnretained(self).toOpaque()
+        let status = VTCompressionSessionCreate(
+            allocator: nil,
+            width: Int32(width),
+            height: Int32(height),
+            codecType: kCMVideoCodecType_H264,
+            encoderSpecification: nil,
+            imageBufferAttributes: nil,
+            compressedDataAllocator: nil,
+            outputCallback: { outputCallbackRefCon, _, status, _, sampleBuffer in
+                guard status == noErr, let sampleBuffer = sampleBuffer,
+                      let refCon = outputCallbackRefCon else { return }
+                let encoder = Unmanaged<H264Encoder>.fromOpaque(refCon).takeUnretainedValue()
+                encoder.handleEncodedFrame(sampleBuffer)
+            },
+            refcon: selfPtr,
+            compressionSessionOut: &session
+        )
+        guard status == noErr, let sess = session else {
+            print("H264: VTCompressionSessionCreate failed: \(status)")
+            return false
+        }
+        self.session = sess
+
+        // Configure for low-latency real-time streaming
+        VTSessionSetProperty(sess, key: kVTCompressionPropertyKey_RealTime, value: kCFBooleanTrue)
+        VTSessionSetProperty(sess, key: kVTCompressionPropertyKey_ProfileLevel,
+                             value: kVTProfileLevel_H264_Main_AutoLevel)
+        VTSessionSetProperty(sess, key: kVTCompressionPropertyKey_AllowFrameReordering,
+                             value: kCFBooleanFalse)  // No B-frames → lower latency
+        VTSessionSetProperty(sess, key: kVTCompressionPropertyKey_AverageBitRate,
+                             value: 2_000_000 as CFNumber)  // 2 Mbps
+        VTSessionSetProperty(sess, key: kVTCompressionPropertyKey_MaxKeyFrameInterval,
+                             value: 60 as CFNumber)  // Keyframe every 60 frames (~2s)
+        VTSessionSetProperty(sess, key: kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration,
+                             value: 2.0 as CFNumber)
+        VTSessionSetProperty(sess, key: kVTCompressionPropertyKey_ExpectedFrameRate,
+                             value: 30 as CFNumber)
+
+        VTCompressionSessionPrepareToEncodeFrames(sess)
+        print("H264: encoder started (\(width)x\(height))")
+        return true
+    }
+
+    func encode(pixelBuffer: CVPixelBuffer, forceKeyframe: Bool = false) -> Data? {
+        guard let session = session else { return nil }
+
+        let pts = CMTimeMake(value: frameIndex, timescale: 30)
+        frameIndex += 1
+
+        var properties: CFDictionary? = nil
+        if forceKeyframe {
+            properties = [kVTEncodeFrameOptionKey_ForceKeyFrame: true] as CFDictionary
+        }
+
+        pendingData = nil
+        let status = VTCompressionSessionEncodeFrame(
+            session, imageBuffer: pixelBuffer, presentationTimeStamp: pts,
+            duration: .invalid, frameProperties: properties,
+            sourceFrameRefcon: nil, infoFlagsOut: nil
+        )
+        guard status == noErr else { return nil }
+
+        // Flush synchronously to get the output immediately
+        VTCompressionSessionCompleteFrames(session, untilPresentationTimeStamp: pts)
+        return pendingData
+    }
+
+    func stop() {
+        if let session = session {
+            VTCompressionSessionCompleteFrames(session, untilPresentationTimeStamp: .invalid)
+            VTCompressionSessionInvalidate(session)
+        }
+        session = nil
+        print("H264: encoder stopped")
+    }
+
+    /// Called by VTCompressionSession output handler — extracts Annex B NAL data
+    private func handleEncodedFrame(_ sampleBuffer: CMSampleBuffer) {
+        var result = Data()
+
+        // Check if keyframe — extract SPS/PPS from format description
+        let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false)
+        var isKeyframe = false
+        if let attachments = attachments, CFArrayGetCount(attachments) > 0 {
+            let dict = unsafeBitCast(CFArrayGetValueAtIndex(attachments, 0), to: CFDictionary.self)
+            var notSync: CFBoolean = kCFBooleanFalse
+            if CFDictionaryGetValueIfPresent(dict, Unmanaged.passUnretained(kCMSampleAttachmentKey_NotSync).toOpaque(), nil) {
+                // If NotSync is absent or false, it's a keyframe
+                isKeyframe = true
+            }
+            if !CFDictionaryContainsKey(dict, Unmanaged.passUnretained(kCMSampleAttachmentKey_NotSync).toOpaque()) {
+                isKeyframe = true
+            }
+        }
+
+        if isKeyframe, let formatDesc = CMSampleBufferGetFormatDescription(sampleBuffer) {
+            // Extract SPS
+            var spsSize: Int = 0
+            var spsCount: Int = 0
+            var spsPtr: UnsafePointer<UInt8>?
+            CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
+                formatDesc, parameterSetIndex: 0, parameterSetPointerOut: &spsPtr,
+                parameterSetSizeOut: &spsSize, parameterSetCountOut: &spsCount, nalUnitHeaderLengthOut: nil)
+            if let spsPtr = spsPtr, spsSize > 0 {
+                result.append(contentsOf: [0, 0, 0, 1])  // Annex B start code
+                result.append(spsPtr, count: spsSize)
+            }
+
+            // Extract PPS
+            var ppsSize: Int = 0
+            var ppsPtr: UnsafePointer<UInt8>?
+            CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
+                formatDesc, parameterSetIndex: 1, parameterSetPointerOut: &ppsPtr,
+                parameterSetSizeOut: &ppsSize, parameterSetCountOut: nil, nalUnitHeaderLengthOut: nil)
+            if let ppsPtr = ppsPtr, ppsSize > 0 {
+                result.append(contentsOf: [0, 0, 0, 1])
+                result.append(ppsPtr, count: ppsSize)
+            }
+        }
+
+        // Extract NAL units from block buffer (AVCC format → Annex B)
+        guard let dataBuffer = sampleBuffer.dataBuffer else { return }
+        var totalLength = 0
+        var dataPointer: UnsafeMutablePointer<Int8>?
+        CMBlockBufferGetDataPointer(dataBuffer, atOffset: 0, lengthAtOffsetOut: nil,
+                                     totalLengthOut: &totalLength, dataPointerOut: &dataPointer)
+        guard let ptr = dataPointer else { return }
+
+        var offset = 0
+        // Get NAL unit length field size from format description (usually 4 bytes)
+        var nalLengthSize: Int32 = 4
+        if let formatDesc = CMSampleBufferGetFormatDescription(sampleBuffer) {
+            CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
+                formatDesc, parameterSetIndex: 0, parameterSetPointerOut: nil,
+                parameterSetSizeOut: nil, parameterSetCountOut: nil,
+                nalUnitHeaderLengthOut: &nalLengthSize)
+        }
+
+        while offset < totalLength {
+            // Read NAL unit length (big-endian, usually 4 bytes)
+            var nalLength: UInt32 = 0
+            memcpy(&nalLength, ptr.advanced(by: offset), Int(nalLengthSize))
+            nalLength = UInt32(bigEndian: nalLength)
+            offset += Int(nalLengthSize)
+
+            // Write Annex B start code + NAL data
+            result.append(contentsOf: [0, 0, 0, 1])
+            result.append(Data(bytes: ptr.advanced(by: offset), count: Int(nalLength)))
+            offset += Int(nalLength)
+        }
+
+        pendingData = result
+    }
+}
+
 #if canImport(ScreenCaptureKit)
 @available(macOS 12.3, *)
 class SCKCapture: NSObject, SCStreamOutput, SCStreamDelegate {
@@ -42,6 +214,8 @@ class SCKCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     private var pushEncoding = false  // back-pressure: true = encode queue busy
     private var pushPrevBuffer: CVPixelBuffer?
     private var pushPrevCGImage: CGImage?
+    private var h264Encoder: H264Encoder?
+    private var useH264 = false
     private var pushKeyCounter = 0
     var pushFrameCount = 0
     var callbackCount = 0  // total SCK callbacks received (for diagnostics)
@@ -111,9 +285,26 @@ class SCKCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         pushStartTime = CFAbsoluteTimeGetCurrent()
         pushDoneSemaphore = sem
         unchangedCount = 30  // force next callback to process (bypass adaptive skip)
+
+        // Initialize H.264 encoder if requested
+        if params.codec == "h264" {
+            let w = latestBuffer != nil ? CVPixelBufferGetWidth(latestBuffer!) : 1920
+            let h = latestBuffer != nil ? CVPixelBufferGetHeight(latestBuffer!) : 1080
+            let encoder = H264Encoder(width: w, height: h)
+            if encoder.start() {
+                h264Encoder = encoder
+                useH264 = true
+                print("  Push stream: H.264 encoding enabled")
+            } else {
+                print("  Push stream: H.264 init failed, using JPEG")
+                useH264 = false
+            }
+        } else {
+            useH264 = false
+        }
         lock.unlock()
 
-        print("  Push stream started (fd=\(fd))")
+        print("  Push stream started (fd=\(fd), codec=\(params.codec))")
         return sem
     }
 
@@ -143,6 +334,9 @@ class SCKCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         pushStop = true
         pushPrevBuffer = nil
         pushPrevCGImage = nil
+        h264Encoder?.stop()
+        h264Encoder = nil
+        useH264 = false
         let sem = pushDoneSemaphore
         pushDoneSemaphore = nil
         lock.unlock()
@@ -217,12 +411,32 @@ class SCKCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     private func encodeAndSendFrame(pixelBuffer: CVPixelBuffer, fd: Int32, params: CaptureParams) {
         lock.lock()
         let stopped = pushStop
+        let h264 = useH264 && params.region == nil  // H.264 only for full-screen (no crop)
         lock.unlock()
         if stopped { return }
 
         let t0 = CFAbsoluteTimeGetCurrent()
 
-        // Convert CVPixelBuffer → CGImage
+        if h264, let encoder = h264Encoder {
+            // H.264 path: encode CVPixelBuffer directly (no CGImage conversion)
+            let forceKey = pushFrameCount == 0  // first frame is always keyframe
+            guard let nalData = encoder.encode(pixelBuffer: pixelBuffer, forceKeyframe: forceKey) else { return }
+            let t1 = CFAbsoluteTimeGetCurrent()
+            if writeTypedFrame(type: 0x03, nalData, to: fd) {
+                lock.lock()
+                pushFrameCount += 1
+                let elapsed = CFAbsoluteTimeGetCurrent() - pushStartTime
+                let fps = elapsed > 0 ? Double(pushFrameCount) / elapsed : 0
+                lock.unlock()
+                let encodeMs = Int((t1 - t0) * 1000)
+                print("  [h264] \(nalData.count/1024)KB encode:\(encodeMs)ms fps:\(String(format: "%.1f", fps))")
+            } else {
+                stopPushStream()
+            }
+            return
+        }
+
+        // JPEG path (fallback, or when region/crop is active)
         var cgImage: CGImage?
         VTCreateCGImageFromCVPixelBuffer(pixelBuffer, options: nil, imageOut: &cgImage)
         guard var image = cgImage else { return }
@@ -233,9 +447,6 @@ class SCKCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 
         let t1 = CFAbsoluteTimeGetCurrent()
 
-        // Push-model: always encode at native resolution (no resize).
-        // Resize is 5x slower (~57ms) vs direct encode (~11ms) and kills FPS.
-        // Only JPEG quality varies — bandwidth is not the bottleneck on WiFi.
         let outData = NSMutableData()
         guard let dest = CGImageDestinationCreateWithData(outData, "public.jpeg" as CFString, 1, nil) else { return }
         CGImageDestinationAddImage(dest, image, [
@@ -255,7 +466,6 @@ class SCKCapture: NSObject, SCStreamOutput, SCStreamDelegate {
             print("  [push] \(frameData.count/1024)KB convert:\(convertMs)ms encode:\(encodeMs)ms fps:\(String(format: "%.1f", fps))")
         } else {
             stopPushStream()
-            return
         }
     }
 
@@ -607,6 +817,7 @@ struct CaptureParams {
     var quality: Int? = nil
     var maxDim: Int? = nil
     var region: (x: Double, y: Double, w: Double, h: Double)? = nil
+    var codec: String = "jpeg"  // "jpeg" or "h264"
 }
 
 func parseCommand(_ cmd: String) -> (action: String, params: CaptureParams) {
@@ -630,6 +841,7 @@ func parseCommand(_ cmd: String) -> (action: String, params: CaptureParams) {
                     params.region = (x: coords[0], y: coords[1],
                                      w: coords[2] - coords[0], h: coords[3] - coords[1])
                 }
+            case "codec": params.codec = val_
             default: break
             }
         }

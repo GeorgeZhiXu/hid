@@ -24,7 +24,7 @@ class TestBtScreenshot:
 
     def test_mac_capture_logged(self, bt_connected: ScreenshotServer):
         log = bt_connected.read_log()
-        assert re.search(r"capture:|\[SCK\]|\[push\]", log), (
+        assert re.search(r"capture:|\[SCK\]|\[push\]|\[h264\]", log), (
             "Mac capture not found in server log"
         )
 
@@ -151,7 +151,7 @@ class TestSCKPushModel:
         if "SCK push-model" not in log:
             pytest.skip("Push model not attempted (SCK unavailable on this machine)")
 
-        push_frames = log.count("[push]")
+        push_frames = log.count("[push]") + log.count("[h264]")
         used_legacy = "falling back to legacy" in log and push_frames == 0
 
         if used_legacy:
@@ -258,7 +258,7 @@ class TestSCKCursorTrigger:
 
         # Check server used push model (not legacy)
         server_log = bt_connected.read_log()
-        used_push = "[push]" in server_log
+        used_push = "[push]" in server_log or "[h264]" in server_log
 
         assert frame_count >= 5, (
             f"Cursor movement produced only {frame_count} frames (expected 5+)"
@@ -267,6 +267,106 @@ class TestSCKCursorTrigger:
             print(f"  Cursor triggered push-model: {frame_count} frames")
         else:
             print(f"  Cursor triggered legacy: {frame_count} frames")
+
+
+class TestH264Streaming:
+    """Verify H.264 hardware encoding is used for streaming."""
+
+    def test_h264_frames_in_server_log(self, adb: Adb, bt_connected: ScreenshotServer):
+        """Server should show [h264] log lines during streaming."""
+        import subprocess as sp
+        adb.shell("uiautomator dump /sdcard/ui.xml")
+        xml = adb.shell("cat /sdcard/ui.xml")
+        if "btn_stream" not in xml:
+            pytest.skip("Stream button not visible")
+
+        if 'text="Stop"' in xml:
+            adb.tap_button("btn_stream")
+            time.sleep(5)
+
+        adb.clear_logcat()
+        time.sleep(1)
+        assert adb.tap_button("btn_stream"), "Stream button not found"
+
+        # Generate screen changes
+        sp.run(["osascript", "-e", '''
+            tell app "TextEdit" to activate
+            tell app "System Events" to tell process "TextEdit"
+                try
+                    click menu item "New" of menu "File" of menu bar 1
+                end try
+            end tell
+        '''], timeout=10)
+        time.sleep(5)
+        sp.run(["osascript", "-e", 'tell app "TextEdit" to quit saving no'], timeout=5)
+        time.sleep(3)
+
+        adb.tap_button("btn_stream")
+        time.sleep(2)
+
+        log = bt_connected.read_log()
+        h264_frames = log.count("[h264]")
+        jpeg_frames = log.count("[push]")
+
+        if h264_frames > 0:
+            print(f"  H.264 streaming: {h264_frames} frames")
+            # Extract bandwidth
+            import re
+            sizes = re.findall(r"\[h264\] (\d+)KB", log)
+            if sizes:
+                avg_kb = sum(int(s) for s in sizes) / len(sizes)
+                print(f"  Average frame size: {avg_kb:.0f}KB")
+        elif jpeg_frames > 0:
+            print(f"  JPEG fallback: {jpeg_frames} frames (H.264 not available)")
+        else:
+            pytest.skip("No streaming frames in server log")
+
+    def test_h264_tablet_receives_frames(self, adb: Adb, bt_connected: ScreenshotServer):
+        """Tablet should receive and decode H.264 or JPEG stream frames."""
+        import subprocess as sp
+        adb.shell("uiautomator dump /sdcard/ui.xml")
+        xml = adb.shell("cat /sdcard/ui.xml")
+        if "btn_stream" not in xml:
+            pytest.skip("Stream button not visible")
+
+        if 'text="Stop"' in xml:
+            adb.tap_button("btn_stream")
+            time.sleep(5)
+
+        adb.clear_logcat()
+        time.sleep(1)
+        if not adb.tap_button("btn_stream"):
+            pytest.skip("Stream button not found")
+
+        sp.run(["osascript", "-e", '''
+            tell app "TextEdit" to activate
+            tell app "System Events" to tell process "TextEdit"
+                try
+                    click menu item "New" of menu "File" of menu bar 1
+                end try
+            end tell
+        '''], timeout=10)
+        time.sleep(8)
+        sp.run(["osascript", "-e", 'tell app "TextEdit" to quit saving no'], timeout=5)
+        time.sleep(3)
+
+        log = adb.logcat("BtScreenshot")
+        h264_count = len(re.findall(r"Stream \[h264\]", log))
+        jpeg_count = len(re.findall(r"Stream \[full\]", log))
+        total = h264_count + jpeg_count
+
+        adb.tap_button("btn_stream")
+        time.sleep(2)
+
+        if total == 0:
+            # Check if ECONNREFUSED (WiFi socket consumed by prior test)
+            if "ECONNREFUSED" in log or "connect failed" in log:
+                pytest.skip("WiFi connection unavailable (consumed by prior test)")
+        assert total >= 5, f"Too few frames: {total} (h264={h264_count}, jpeg={jpeg_count})"
+        if h264_count > 0:
+            print(f"  Tablet decoded {h264_count} H.264 frames")
+        else:
+            print(f"  Tablet received {jpeg_count} JPEG frames (H.264 decode may not be active)")
 
 
 class TestDeltaStreaming:

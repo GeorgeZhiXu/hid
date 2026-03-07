@@ -12,6 +12,10 @@ import android.content.IntentFilter
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.RectF
+import android.media.ImageReader
+import android.media.MediaCodec
+import android.media.MediaFormat
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -121,6 +125,9 @@ class BluetoothScreenshot(private val context: Context) {
         val (quality, maxDim) = PenMath.resolveQuality(preset, lastTransferMs, lastTransferBytes)
         val sb = StringBuilder(base)
         sb.append(" q=$quality max=$maxDim")
+        if (base == "stream" && focusRect == null) {
+            sb.append(" codec=h264")  // request H.264 for full-screen streaming
+        }
         focusRect?.let { r ->
             sb.append(" r=%.3f,%.3f,%.3f,%.3f".format(r.left, r.top, r.right, r.bottom))
         }
@@ -487,6 +494,137 @@ class BluetoothScreenshot(private val context: Context) {
     // Stream socket is separate from wifiSocket (screenshot socket)
     @Volatile private var streamSocket: java.net.Socket? = null
 
+    // ---- H.264 decoder state ----
+    private var h264Decoder: MediaCodec? = null
+    private var h264BufferInfo: MediaCodec.BufferInfo? = null
+    private var h264ImageReader: ImageReader? = null
+    private var h264LatestBitmap: Bitmap? = null
+
+    private fun findNalUnits(data: ByteArray): List<Pair<Int, Int>> {
+        // Reuse logic from StreamReceiver — find Annex B start codes
+        val units = mutableListOf<Int>()
+        var i = 0
+        while (i < data.size - 2) {
+            if (data[i] == 0.toByte() && data[i + 1] == 0.toByte()) {
+                if (i + 2 < data.size && data[i + 2] == 1.toByte()) {
+                    units.add(i + 3); i += 3; continue
+                } else if (i + 3 < data.size && data[i + 2] == 0.toByte() && data[i + 3] == 1.toByte()) {
+                    units.add(i + 4); i += 4; continue
+                }
+            }
+            i++
+        }
+        return units.mapIndexed { idx, start ->
+            val end = if (idx + 1 < units.size) {
+                var e = units[idx + 1] - 3
+                if (e > 0 && data[e - 1] == 0.toByte()) e--
+                e
+            } else data.size
+            Pair(start, end - start)
+        }.filter { it.second > 0 }
+    }
+
+    private fun initH264Decoder(firstFrame: ByteArray): MediaCodec? {
+        val nalUnits = findNalUnits(firstFrame)
+        var sps: ByteArray? = null
+        var pps: ByteArray? = null
+        for ((offset, len) in nalUnits) {
+            val nalType = firstFrame[offset].toInt() and 0x1F
+            when (nalType) {
+                7 -> sps = firstFrame.copyOfRange(offset, offset + len)
+                8 -> pps = firstFrame.copyOfRange(offset, offset + len)
+            }
+        }
+        if (sps == null || pps == null) {
+            Log.w(TAG, "H.264: SPS/PPS not found in first frame")
+            return null
+        }
+        Log.i(TAG, "H.264: SPS(${sps.size}B) PPS(${pps.size}B) found")
+
+        // Parse width/height from SPS (simplified — use defaults if parsing fails)
+        val format = MediaFormat.createVideoFormat("video/avc", 1920, 1080).apply {
+            setByteBuffer("csd-0", ByteBuffer.wrap(byteArrayOf(0, 0, 0, 1) + sps))
+            setByteBuffer("csd-1", ByteBuffer.wrap(byteArrayOf(0, 0, 0, 1) + pps))
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
+            }
+            setInteger(MediaFormat.KEY_PRIORITY, 0)
+        }
+
+        val codec = MediaCodec.createDecoderByType("video/avc")
+        // Use ImageReader for Bitmap output
+        h264ImageReader = ImageReader.newInstance(1920, 1080, android.graphics.PixelFormat.RGBA_8888, 3)
+        codec.configure(format, h264ImageReader!!.surface, null, 0)
+        codec.start()
+        h264BufferInfo = MediaCodec.BufferInfo()
+        Log.i(TAG, "H.264 decoder started")
+        return codec
+    }
+
+    private fun feedH264Data(codec: MediaCodec, data: ByteArray, bufferInfo: MediaCodec.BufferInfo) {
+        var pos = 0
+        while (pos < data.size && streaming.get()) {
+            val inputIndex = codec.dequeueInputBuffer(5000) // 5ms timeout
+            if (inputIndex >= 0) {
+                val inputBuffer = codec.getInputBuffer(inputIndex)!!
+                val chunkSize = minOf(data.size - pos, inputBuffer.capacity())
+                inputBuffer.clear()
+                inputBuffer.put(data, pos, chunkSize)
+                codec.queueInputBuffer(inputIndex, 0, chunkSize, System.nanoTime() / 1000, 0)
+                pos += chunkSize
+            }
+            // Drain any available output
+            drainH264Frame(codec, bufferInfo)
+        }
+    }
+
+    private fun drainH264Frame(codec: MediaCodec, bufferInfo: MediaCodec.BufferInfo): Bitmap? {
+        var bitmap: Bitmap? = null
+        while (true) {
+            val outputIndex = codec.dequeueOutputBuffer(bufferInfo, 0)
+            if (outputIndex >= 0) {
+                // Release to ImageReader's surface — triggers onImageAvailable
+                codec.releaseOutputBuffer(outputIndex, true)
+                // Read from ImageReader
+                val image = h264ImageReader?.acquireLatestImage()
+                if (image != null) {
+                    try {
+                        val planes = image.planes
+                        val buffer = planes[0].buffer
+                        val pixelStride = planes[0].pixelStride
+                        val rowStride = planes[0].rowStride
+                        val rowPadding = rowStride - pixelStride * image.width
+                        val bmp = Bitmap.createBitmap(
+                            image.width + rowPadding / pixelStride,
+                            image.height, Bitmap.Config.ARGB_8888
+                        )
+                        bmp.copyPixelsFromBuffer(buffer)
+                        // Crop if there was padding
+                        bitmap = if (rowPadding > 0) {
+                            Bitmap.createBitmap(bmp, 0, 0, image.width, image.height)
+                        } else bmp
+                    } finally {
+                        image.close()
+                    }
+                }
+            } else if (outputIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                Log.i(TAG, "H.264 output format: ${codec.outputFormat}")
+            } else {
+                break
+            }
+        }
+        return bitmap
+    }
+
+    private fun releaseH264Decoder() {
+        try { h264Decoder?.stop() } catch (_: Exception) {}
+        try { h264Decoder?.release() } catch (_: Exception) {}
+        h264Decoder = null
+        h264BufferInfo = null
+        h264ImageReader?.close()
+        h264ImageReader = null
+    }
+
     fun stopStream() {
         if (!streaming.getAndSet(false)) return
         try {
@@ -568,6 +706,34 @@ class BluetoothScreenshot(private val context: Context) {
                         Log.d(TAG, "Stream [delta] #$frameCount ${tileCount} tiles ${totalSize/1024}KB recv:${t1-t0}ms parse:${t2-t1}ms fps:${"%.1f".format(fps)} tiles_changed=$tileCount")
                         mainHandler.post { listener?.onDeltaFrame(tiles) }
                     }
+                    0x03 -> {
+                        // H.264 frame (Annex B NAL units)
+                        val frame = readFrame(input)
+                        val t1 = System.currentTimeMillis()
+
+                        if (h264Decoder == null) {
+                            // Initialize decoder from first keyframe's SPS/PPS
+                            h264Decoder = initH264Decoder(frame)
+                            if (h264Decoder == null) {
+                                Log.e(TAG, "H.264 decoder init failed, skipping frame")
+                                continue
+                            }
+                        }
+
+                        // Feed NAL data to decoder
+                        feedH264Data(h264Decoder!!, frame, h264BufferInfo!!)
+                        // Drain decoded frames
+                        val bitmap = drainH264Frame(h264Decoder!!, h264BufferInfo!!)
+
+                        val t2 = System.currentTimeMillis()
+                        frameCount++
+                        val elapsed = (t2 - startTime) / 1000.0
+                        val fps = if (elapsed > 0) frameCount / elapsed else 0.0
+                        Log.d(TAG, "Stream [h264] #$frameCount ${frame.size/1024}KB recv:${t1-t0}ms decode:${t2-t1}ms fps:${"%.1f".format(fps)}")
+                        if (bitmap != null) {
+                            mainHandler.post { listener?.onStreamFrame(bitmap) }
+                        }
+                    }
                     else -> {
                         Log.w(TAG, "Unknown frame type: $type")
                     }
@@ -580,6 +746,7 @@ class BluetoothScreenshot(private val context: Context) {
                 mainHandler.post { listener?.onScreenshotError("Stream ended: ${e.message}") }
             }
         } finally {
+            releaseH264Decoder()
             streamSocket = null
         }
     }
