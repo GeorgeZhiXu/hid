@@ -569,6 +569,15 @@ class MainActivity : AppCompatActivity(),
         layout.addView(pinchThreshSeek)
         layout.addView(pinchThreshLabel)
 
+        // Version info
+        val versionName = try { packageManager.getPackageInfo(packageName, 0).versionName } catch (_: Exception) { "?" }
+        layout.addView(TextView(this).apply {
+            text = "TabletPen v$versionName"
+            setPadding(0, 32, 0, 4)
+            setTextColor(android.graphics.Color.GRAY)
+            textSize = 12f
+        })
+
         val scroll = ScrollView(this).apply { addView(layout) }
 
         AlertDialog.Builder(this)
