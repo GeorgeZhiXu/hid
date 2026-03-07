@@ -17,12 +17,12 @@
 **Root cause:** `startStream()` opened a fresh TCP connection but didn't close the existing `wifiSocket` first. Mac server only accepts one client on port 9877.
 **Fix:** `startStream()` now closes `wifiSocket` before opening the stream connection.
 
-### SCK grabFrame() returns stale buffers during streaming
-**Status:** Resolved — root cause identified and fixed in v1.1.3
-**Symptoms:** Stream frames never change on tablet even though Mac screen changes. All frames have identical content hash. 480 frames received at 20 FPS but all identical.
-**Root cause:** Two issues: (1) SCK's adaptive FPS filter (`hasPixelsChanged`) was suppressing frame buffer updates during streaming, causing `grabFrame()` to return stale data; (2) `captureScreen()` routed to SCK even during streaming, instead of the legacy `screencapture` subprocess.
-**Fix:** Added `streamingMode` flag to bypass adaptive FPS filter during streaming. Also forced `captureScreenLegacy()` in `streamLoop` since SCK's pull-based `grabFrame()` is fundamentally unsuitable for continuous streaming.
-**Current state:** Streaming works via legacy `screencapture` at ~20 FPS. SCK used for single screenshots (~0ms). SCK push-model streaming (callback-driven, VNC-style) planned as replacement.
+### SCK doesn't deliver frames for cursor-only changes
+**Status:** Open — by design (macOS limitation)
+**Symptoms:** SCK push-model streaming gets 0 frames when only the cursor moves. Only 3 frames delivered at startup, then nothing until a window changes (open/close app, scroll, type).
+**Root cause:** macOS ScreenCaptureKit is compositor-event-driven. It only delivers frames when **window content** changes. Cursor movement alone doesn't trigger the compositor to render a new frame. This is by design — the cursor is composited separately by the WindowServer.
+**Impact:** SCK push-model streaming (30 FPS, delta compression) only activates when the user is actively using apps on the Mac. For cursor-tracking on a static desktop, legacy `screencapture` subprocess (~6 FPS) is used as fallback.
+**Workaround:** The 3-second probe with automatic fallback ensures streaming always works. During actual drawing (cursor moves + app renders strokes), SCK should deliver frames and the push model should activate.
 
 ### macOS `openRFCOMMChannelSync` always fails synchronously
 **Status:** Accepted — workaround in place
